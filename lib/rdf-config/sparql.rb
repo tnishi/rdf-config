@@ -4,18 +4,16 @@ class RDFConfig
 
     attr_reader :parameters, :variables
 
-    PROPERTY_PATH_SEPARATOR = ' / '.freeze
-
     def initialize(model, opts)
-      if opts[:sparql_query_name].to_s.empty?
-        @query_name = 'sparql'
-      else
-        @query_name = opts[:sparql_query_name]
-      end
+      @query_name = if opts[:sparql_query_name].to_s.empty?
+                      'sparql'
+                    else
+                      opts[:sparql_query_name]
+                    end
 
-      @model = model
       @prefixes = model.prefix
       @sparql_config = model.parse_sparql
+      @triples = model.triples
 
       if @sparql_config.key?(@query_name)
         @parameters = current_sparql.key?('parameters') ? current_sparql['parameters'] : {}
@@ -115,7 +113,8 @@ class RDFConfig
       lines = []
 
       parameters.each do |var_name, value|
-        if @model.object_type(var_name) == :literal
+        object = @triples.map(&:object).select { |object| object.name == var_name }.first
+        if object.is_a?(RDFConfig::Model::Literal)
           value = %Q("#{value}")
         end
         lines << "  VALUES ?#{var_name} { #{value} }"
@@ -156,16 +155,17 @@ class RDFConfig
       required_lines = {}
       optional_lines = {}
       variable_names.each do |variable_name|
-        next if @model.subject_name?(variable_name)
+        next if @triples.map(&:subject).map(&:name).include?(variable_name)
 
-        subject = @model.subject_by_object_name(variable_name)
-        required_lines[subject.name] = [['a', @model.subject_type(subject.name)]] unless required_lines.key?(subject.name)
+        triple = @triples.select { |triple| triple.object.name == variable_name }.first
+        subject = triple.subject
+        required_lines[subject.name] = [['a', subject.type]] unless required_lines.key?(subject.name)
         optional_lines[subject.name] = [] unless optional_lines.key?(subject.name)
 
-        property_phrase = [@model.property_paths(variable_name).join(PROPERTY_PATH_SEPARATOR), "?#{variable_name}"]
+        property_phrase = [triple.property_path, "?#{variable_name}"]
 
-        property = @model.property_by_object_name(variable_name)
-        if property.predicate.sparql_optional_phrase?
+        predicate = triple.predicates.last
+        if predicate.sparql_optional_phrase?
           optional_lines[subject.name] << property_phrase
         else
           required_lines[subject.name] << property_phrase
@@ -173,29 +173,6 @@ class RDFConfig
       end
 
       { required: required_lines, optional: optional_lines }
-    end
-
-    def find_variable(var_name)
-      var_info = {}
-      @model.property_path_map.each do |subj_name, path_map|
-        if path_map[var_name]
-          var_info[:subject_name] = subj_name
-          var_info[:path_map] = path_map[var_name]
-          break
-        end
-      end
-
-      var_info
-    end
-
-    def used_subject_names
-      names = []
-      @variables.each do |var_name|
-        subject_name = @model.subject_name(var_name)
-        names << subject_name unless names.include?(subject_name)
-      end
-
-      names
     end
 
     def select_var_names
@@ -206,15 +183,13 @@ class RDFConfig
       prefixes = []
 
       variable_names.each do |variable_name|
-        next if @model.subject_name?(variable_name)
+        next if @triples.map(&:subject).map(&:name).include?(variable_name)
 
-        subject_name = @model.subject_name(variable_name)
-        next if subject_name.to_s.empty?
+        triple = @triples.select { |triple| triple.object.name == variable_name }.first
+        next if triple.nil?
 
-        rdf_type = @model.subject_type(subject_name)
-        property = @model.property_by_object_name(variable_name)
-        property.property_paths.dup.push(rdf_type).reject(&:empty?).each do |uri|
-          if /\A(\w+):\w+\z/ =~ uri
+        triple.predicates.each do |predicate|
+          if /\A(\w+):\w+\z/ =~ predicate.uri
             prefix = Regexp.last_match(1)
             prefixes << prefix unless prefixes.include?(prefix)
           end
@@ -227,7 +202,8 @@ class RDFConfig
     def used_prefixes(variables = @variables, parameters = @parameters)
       prefixes = used_prefixes_by_variable(variables)
       parameters.each do |var_name, value|
-        next if @model.object_type(var_name) == :literal
+        object = @triples.map(&:object).select { |object| object.name == var_name }.first
+        next unless object.is_a?(RDFConfig::Model::URI)
 
         if /\A(\w+):(.+)/ =~ value && !prefixes.include?($1)
           prefixes << $1
