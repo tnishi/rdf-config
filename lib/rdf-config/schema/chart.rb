@@ -15,204 +15,34 @@ class RDFConfig
       include SVGElementOpt
       include SVGElement
 
-      Point = Struct.new(:x, :y)
+      Position = Struct.new(:x, :y)
       ArrowPosition = Struct.new(:x1, :y1, :x2, :y2)
 
       START_X = 50.freeze
       START_Y = 10.freeze
       YPOS_CHANGE_NUM_OBJ = 8.freeze
 
-      def initialize(model)
-        @model = model
-
+      def initialize(config)
+        @model = Model.new(config)
         @svg_element = svg_element
-        @current_pos = Point.new(START_X, START_Y)
-        @subject_ypos = START_Y
-        @object_pos = {}
-        @num_objects = 0
+
+        @current_pos = Position.new(START_X, START_Y)
+        @subject_queue = []
         @generated_subjects = []
-        @object_positions = []
+        @element_pos = {}
       end
 
       def generate
         @model.subjects.each do |subject|
-          @num_objects = 0
           generate_subject(subject)
-          @current_pos.x = START_X
-          @subject_ypos = @current_pos.y
         end
 
         output_svg
       end
 
-      def generate_subject(subject)
-        return if @generated_subjects.include?(subject.name)
-
-        if @object_pos.key?(subject.name)
-          # move to subject rectangle position
-          @current_pos.x = @object_pos[subject.name].x
-          @current_pos.y = @subject_ypos = @object_pos[subject.name].y
-        else
-          # draw subject rectangle
-          if subject.blank_node?
-            generate_blank_node(subject)
-          else
-            inner_texts = [subject.name, subject.value]
-            add_to_svg(uri_elements(@current_pos, inner_texts, :instance))
-          end
-        end
-
-        move_to_predicate
-        subject.predicates.each do |predicate|
-          generate_predicate(predicate)
-          predicate.objects.each do |object|
-            if object.value.is_a?(RDFConfig::Model::Subject)
-              generate_object_as_subject(object.value)
-            else
-              generate_object(object)
-            end
-          end
-        end
-
-        @generated_subjects << subject.name unless subject.blank_node?
-      end
-
-      def generate_property(subject, property_hash)
-        key = property_hash.keys.first
-        predicate = Model::Predicate.new(key)
-        objects = property_hash[key]
-
-        case objects
-        when String
-          if predicate.rdf_type?
-            # objects is rdf:type URI
-            generate_rdf_type(objects)
-          else
-            # If the objects is a string, consider it a object name
-            generate_predicate(predicate)
-            generate_object(Model::Object.instance(objects, @model.prefix))
-          end
-        when Array
-          if predicate.rdf_type?
-            objects.each do |rdf_type|
-              generate_rdf_type(rdf_type)
-            end
-          else
-            objects.each do |object_hash|
-              generate_object_by_hash(subject, predicate, object_hash)
-            end
-          end
-        end
-      end
-
-      def generate_object_by_hash(subject, predicate, object_hash)
-        object = Model::Object.instance(object_hash, @model.prefix)
-        if object.blank_node?
-          generate_blank_node(subject, predicate, object_hash[object.name])
-        else
-          generate_predicate(predicate)
-
-          if subject_name?(object.name)
-            subject_hash = subject_config(object.name)
-            if subject_hash.empty?
-              generate_object(object)
-            else
-              generate_object_as_subject(subject_hash)
-            end
-          else
-            generate_object(object)
-          end
-        end
-      end
-
-      def generate_object_as_subject(subject)
-        #-->subject = Model::Subject.new(subject_hash, @model.prefix)
-        @current_pos.x = @current_pos.x + PREDICATE_AREA_WIDTH
-        prev_subject_ypos = @subject_ypos
-        @subject_ypos = @current_pos.y
-        prev_num_objects = @num_objects
-        @num_objects = 0
-        generate_subject(subject)
-        @current_pos.x = @current_pos.x - (PREDICATE_AREA_WIDTH + RECT_WIDTH)
-        @subject_ypos = prev_subject_ypos
-        @num_objects = prev_num_objects
-      end
-
-      def generate_rdf_type(rdf_type)
-        add_to_svg(
-            predicate_arrow_elements(predicate_arrow_position, :rdf_type, 'rdf:type')
-        )
-
-        position = Point.new(@current_pos.x + PREDICATE_AREA_WIDTH, @current_pos.y)
-        add_to_svg(uri_elements(position, rdf_type, :class))
-
-        @num_objects += 1
-        move_to_next_object
-      end
-
-      def generate_predicate(predicate)
-        arrow_type = predicate.rdf_type? ? :rdf_type : :predicate
-        add_to_svg(
-            predicate_arrow_elements(predicate_arrow_position, arrow_type, predicate.uri)
-        )
-      end
-
-      def generate_object(object)
-        pos = Point.new(@current_pos.x + PREDICATE_AREA_WIDTH, @current_pos.y)
-        inner_texts = [object.name, object.value]
-
-        case object
-        when Model::Unknown
-          add_to_svg(unknown_object_elements(pos, inner_texts[0]))
-        when Model::URI
-          add_to_svg(uri_elements(pos, inner_texts))
-        when Model::Literal
-          add_to_svg(object_literal_elements(pos, inner_texts, object.type))
-        end
-
-        @object_pos[object.name] = pos.dup
-        @object_positions << pos.dup
-        @num_objects += 1
-        move_to_next_object
-      end
-
-      #def generate_blank_node(subject, predicate, properties)
-      def generate_blank_node(subject)
-        prev_pos = @current_pos.dup
-        prev_subject_ypos = @subject_ypos.dup
-        prev_num_objects = @num_objects.dup
-
-        # Draw an arrow pointing to a blank node circle
-        predicate = subject.predicates.first
-        add_to_svg(
-            predicate_arrow_elements(predicate_arrow_position(:bnode), :predicate, predicate.uri)
-        )
-
-        # Draw blank node object (Circle)
-        pos = Point.new(@current_pos.x + PREDICATE_AREA_WIDTH, @current_pos.y)
-        add_to_svg(blank_node_elements(pos))
-
-        # Draw predicates and objects when the blank node is subject.
-        @num_objects = 0
-        @current_pos.x = pos.x + BNODE_RADIUS * 2
-        @current_pos.y = pos.y
-        @subject_ypos = @current_pos.y
-        #properties.each do |property_hash|
-        #  generate_property(subject, property_hash)
-        #end
-        subject.predicates.each do |predicate|
-          generate_predicate(predicate)
-        end
-
-        @current_pos = prev_pos
-        @num_objects.times { move_to_next_object }
-        @subject_ypos = prev_subject_ypos
-        @num_objects = prev_num_objects
-      end
-
       def output_svg
-        width = @object_pos.values.map(&:x).max + RECT_WIDTH + 100
-        height = @object_pos.values.map(&:y).max + RECT_HEIGHT + MARGIN_RECT + 100
+        width = @element_pos.values.flatten.map(&:x).max + RECT_WIDTH + 100
+        height = @element_pos.values.flatten.map(&:y).max + RECT_HEIGHT + MARGIN_RECT + 100
         svg_opts = {
             width: "#{width}px",
             height: "#{height}px",
@@ -223,6 +53,111 @@ class RDFConfig
         xml = xml_doc
         xml.add_element(@svg_element)
         xml.write($stdout, 2)
+      end
+
+      def generate_subject(subject)
+        return if @generated_subjects.include?(subject.name)
+
+        unless @element_pos.key?(subject.object_id)
+          @element_pos[subject.object_id] = []
+        end
+        @subject_queue.push(subject)
+        add_element_position
+
+        if subject.blank_node?
+          add_to_svg(blank_node_elements(@current_pos))
+        else
+          inner_texts = [subject.name, subject.value]
+          add_to_svg(uri_elements(@current_pos, inner_texts, :instance))
+        end
+
+        subject.predicates.each do |predicate|
+          predicate.objects.each do |object|
+            generate_predicate_object(predicate, object)
+            move_to_next_object
+          end
+        end
+
+        @generated_subjects << subject.name unless subject.blank_node?
+        @subject_queue.pop
+      end
+
+      def generate_predicate_object(predicate, object)
+        move_to_predicate
+        generate_predicate(predicate, object)
+
+        # move object position after generating predicate
+        @current_pos.x += PREDICATE_AREA_WIDTH
+        generate_object(predicate, object)
+      end
+
+      def generate_predicate(predicate, object)
+        add_to_svg(
+            predicate_arrow_elements(predicate_arrow_position(object), predicate)
+        )
+      end
+
+      def generate_object(predicate, object)
+        add_element_position
+
+        if object.instance_of?(Model::Subject)
+          generate_subject(object)
+        elsif object.blank_node?
+          generate_subject(object.value)
+        elsif predicate.rdf_type?
+          add_to_svg(uri_elements(@current_pos, object.name, :class))
+        else
+          inner_texts = [object.name, object.value]
+          case object
+          when Model::Unknown
+            add_to_svg(unknown_object_elements(@current_pos, inner_texts[0]))
+          when Model::URI
+            add_to_svg(uri_elements(@current_pos, inner_texts))
+          when Model::Literal
+            add_to_svg(object_literal_elements(@current_pos, inner_texts, object.type))
+          end
+        end
+      end
+
+      def subject_position(subject)
+        @element_pos[subject.object_id].first
+      end
+
+      def move_to_predicate
+        @current_pos.x = if current_subject.blank_node?
+                           subject_position(current_subject).x + BNODE_RADIUS * 2
+                         else
+                           subject_position(current_subject).x + RECT_WIDTH
+                         end
+      end
+
+      def predicate_arrow_position(object)
+        y1 = if current_subject.blank_node?
+               subject_position(current_subject).y + BNODE_RADIUS
+             else
+               subject_position(current_subject).y + RECT_HEIGHT / 2
+             end
+
+        y2 = if object.blank_node?
+               @current_pos.y + BNODE_RADIUS
+             else
+               @current_pos.y + RECT_HEIGHT / 2
+             end
+
+        ArrowPosition.new(@current_pos.x, y1, @current_pos.x + PREDICATE_AREA_WIDTH, y2)
+      end
+
+      def move_to_next_object
+        @current_pos.y = @element_pos.values.flatten.map(&:y).max + RECT_HEIGHT + MARGIN_RECT
+      end
+
+      def current_subject
+        @subject_queue.last
+      end
+
+      def num_objects
+        # notice @element_pos include subject position
+        @element_pos[current_subject.object_id].size - 1
       end
 
       def xml_doc
@@ -244,49 +179,12 @@ class RDFConfig
         end
       end
 
-      def subject_config(subject_name)
-        @model.yaml.select do |subject_hash|
-          name = subject_hash.keys.first.split(/\s+/).first
-          name == subject_name
-        end.first
-      rescue
-        {}
-      end
-
-      def subject_name?(name)
-        /\A[A-Z]/ =~ name
-      end
-
-      def predicate_arrow_position(object_type = :not_bnode)
-        if object_type == :bnode
-          ArrowPosition.new(@current_pos.x, @subject_ypos + RECT_HEIGHT / 2,
-                            @current_pos.x + PREDICATE_AREA_WIDTH, @current_pos.y + BNODE_RADIUS)
-        else
-          ArrowPosition.new(@current_pos.x, @subject_ypos + RECT_HEIGHT / 2,
-                            @current_pos.x + PREDICATE_AREA_WIDTH, @current_pos.y + RECT_HEIGHT / 2)
-        end
+      def add_element_position
+        @element_pos[current_subject.object_id] << @current_pos.dup
       end
 
       def style_value_by_hash(hash)
         hash.map { |name, value| "#{name}: #{value}" }.join('; ')
-      end
-
-      def bnode_key(predicate_paths)
-        predicate_paths[0..-2].join(' / ')
-      end
-
-      def move_to_predicate
-        @current_pos.x += RECT_WIDTH
-      end
-
-      def move_to_next_object
-        @current_pos.y += RECT_HEIGHT + MARGIN_RECT
-        if @num_objects == YPOS_CHANGE_NUM_OBJ
-          @current_pos.x -= RECT_WIDTH / 4
-          @subject_ypos += RECT_HEIGHT / 2
-        elsif @num_objects == YPOS_CHANGE_NUM_OBJ * 2 - 2
-          @current_pos.x -= RECT_WIDTH / 2
-        end
       end
 
       def distance(x1, y1, x2, y2)
@@ -298,15 +196,4 @@ class RDFConfig
     end
 
   end
-end
-
-if $PROGRAM_NAME == __FILE__
-  require 'yaml'
-  require File.expand_path('../model.rb', __dir__)
-  require File.expand_path('../model/triple.rb', __dir__)
-  target = ARGV[0]
-  model = RDFConfig::Model.new("config/#{target}")
-
-  chart = RDFConfig::Schema::Chart.new(model)
-  chart.generate
 end

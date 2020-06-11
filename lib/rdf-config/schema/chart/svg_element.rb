@@ -73,7 +73,15 @@ class RDFConfig
           [g]
         end
 
-        def predicate_arrow_elements(pos, type, legend = '')
+        def predicate_arrow_elements(pos, predicate)
+          if predicate.rdf_type?
+            type = :rdf_type
+            legend = 'rdf:type'
+          else
+            type = :predicate
+            legend = predicate.uri
+          end
+
           g_wrapper = REXML::Element.new('g')
           path_line = REXML::Element.new('path')
           path_triangle = REXML::Element.new('path')

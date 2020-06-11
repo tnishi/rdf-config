@@ -121,7 +121,7 @@ class RDFConfig
         end
 
         def predicate_arrow_text_pos(pos)
-          Point.new(pos.x1 + (pos.x2 - pos.x1) / 2, pos.y1 + (pos.y2 - pos.y1) / 2)
+          Position.new(pos.x1 + (pos.x2 - pos.x1) / 2, pos.y1 + (pos.y2 - pos.y1) / 2)
         end
 
         def predicate_arrow_opts(pos, type)

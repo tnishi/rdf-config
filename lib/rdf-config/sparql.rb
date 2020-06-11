@@ -4,29 +4,25 @@ class RDFConfig
 
     attr_reader :parameters, :variables
 
-    def initialize(model, opts)
+    def initialize(config, opts)
+      @config = config
+      @model = Model.new(@config)
       @query_name = if opts[:sparql_query_name].to_s.empty?
                       'sparql'
                     else
                       opts[:sparql_query_name]
                     end
 
-      @prefixes = model.prefix
-      @sparql_config = model.parse_sparql
-      @triples = model.triples
-
-      if @sparql_config.key?(@query_name)
+      if @config.sparql.key?(@query_name)
         @parameters = current_sparql.key?('parameters') ? current_sparql['parameters'] : {}
         @variables = current_sparql['variables']
       else
         raise "Error: No SPARQL query (#{@query_name}) exists."
       end
-
-      @endpoint_config = model.parse_endpoint
     end
 
     def current_sparql
-      @sparql_config[@query_name]
+      @config.sparql[@query_name]
     end
 
     def generate
@@ -98,7 +94,7 @@ class RDFConfig
       prefixes = used_prefixes(variables, parameters)
 
       prefix_lines = []
-      @prefixes.each do |prefix, uri|
+      @config.prefix.each do |prefix, uri|
         prefix_lines << "PREFIX #{prefix}: #{uri}" if prefixes.include?(prefix)
       end
 
@@ -113,7 +109,7 @@ class RDFConfig
       lines = []
 
       parameters.each do |var_name, value|
-        object = @triples.map(&:object).select { |object| object.name == var_name }.first
+        object = @model.find_object(var_name)
         if object.is_a?(RDFConfig::Model::Literal)
           value = %Q("#{value}")
         end
@@ -155,9 +151,9 @@ class RDFConfig
       required_lines = {}
       optional_lines = {}
       variable_names.each do |variable_name|
-        next if @triples.map(&:subject).map(&:name).include?(variable_name)
+        next if @model.subject?(variable_name)
 
-        triple = @triples.select { |triple| triple.object.name == variable_name }.first
+        triple = @model.find_by_object_name(variable_name)
         subject = triple.subject
         required_lines[subject.name] = [['a', subject.type]] unless required_lines.key?(subject.name)
         optional_lines[subject.name] = [] unless optional_lines.key?(subject.name)
@@ -183,13 +179,14 @@ class RDFConfig
       prefixes = []
 
       variable_names.each do |variable_name|
-        next if @triples.map(&:subject).map(&:name).include?(variable_name)
+        next if @model.subject?(variable_name)
 
-        triple = @triples.select { |triple| triple.object.name == variable_name }.first
+        triple = @model.find_by_object_name(variable_name)
         next if triple.nil?
 
-        triple.predicates.each do |predicate|
-          if /\A(\w+):\w+\z/ =~ predicate.uri
+        uris = triple.subject.types + triple.predicates.map(&:uri)
+        uris.each do |uri|
+          if /\A(\w+):\w+\z/ =~ uri
             prefix = Regexp.last_match(1)
             prefixes << prefix unless prefixes.include?(prefix)
           end
@@ -202,7 +199,7 @@ class RDFConfig
     def used_prefixes(variables = @variables, parameters = @parameters)
       prefixes = used_prefixes_by_variable(variables)
       parameters.each do |var_name, value|
-        object = @triples.map(&:object).select { |object| object.name == var_name }.first
+        object = @model.find_object(var_name)
         next unless object.is_a?(RDFConfig::Model::URI)
 
         if /\A(\w+):(.+)/ =~ value && !prefixes.include?($1)
@@ -222,20 +219,20 @@ class RDFConfig
     end
 
     def all_endpoints
-      case @endpoint_config['endpoint']
+      case @config.endpoint['endpoint']
       when String
-        [@endpoint_config['endpoint']]
+        [@config.endpoint['endpoint']]
       when Array
-        @endpoint_config['endpoint']
+        @config.endpoint['endpoint']
       end
     end
 
     def endpoint
-      case @endpoint_config['endpoint']
+      case @config.endpoint['endpoint']
       when String
-        @endpoint_config['endpoint']
+        @config.endpoint['endpoint']
       when Array
-        @endpoint_config['endpoint'].first
+        @config.endpoint['endpoint'].first
       end
     end
 
