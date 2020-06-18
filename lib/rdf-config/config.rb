@@ -1,3 +1,5 @@
+require 'yaml'
+
 class RDFConfig
   class Config
     def initialize(config_dir)
@@ -25,7 +27,11 @@ class RDFConfig
     end
 
     def metadata
-      @stanza ||= YAML.load_file("#{@config_dir}/metadata.yaml")
+      @metadata ||= YAML.load_file("#{@config_dir}/metadata.yaml")
+    end
+
+    def metadata?
+      File.exist?("#{@config_dir}/metadata.yaml")
     end
 
   end

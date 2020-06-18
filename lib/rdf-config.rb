@@ -48,13 +48,17 @@ class RDFConfig
   end
 
   def generate_stanza_rb
-    stanza = Stanza::Ruby.new(@model, @opts)
+    stanza = Stanza::Ruby.new(@config, @opts)
     stanza.generate
+  rescue Stanza::StanzaConfigNotFound, Stanza::StanzaExecutionFailure => e
+    STDERR.puts e
   end
 
   def generate_stanza_js
-    stanza = Stanza::JavaScript.new(@model, @opts)
+    stanza = Stanza::JavaScript.new(@config, @opts)
     stanza.generate
+  rescue Stanza::StanzaConfigNotFound, Stanza::StanzaExecutionFailure => e
+    STDERR.puts e
   end
 
   def generate_senbero

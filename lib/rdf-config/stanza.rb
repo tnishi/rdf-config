@@ -1,67 +1,65 @@
-require 'rdf-config/stanza/ruby'
+require 'fileutils'
+require 'rdf-config/sparql/sparql_builder'
 require 'rdf-config/stanza/javascript'
+require 'rdf-config/stanza/ruby'
 
 class RDFConfig
   class Stanza
-    def initialize(model, opts = {})
-      if opts[:stanza_name].to_s.empty?
-        @stanza_name = 'stanza'
-      else
-        @stanza_name = opts[:stanza_name]
-      end
+    DEFAULT_NAME = 'stanza'.freeze
 
-      @model = model
-      @stanza_config = @model.parse_stanza
+    def initialize(config, opts = {})
+      @config = config
+      @opts = opts
 
-      if @stanza_config.key?(@stanza_name)
-        @sparql = SPARQL.new(@model, :sparql_query_name => current_stanza['sparql'])
-        @stanza_base_dir = "#{current_stanza['output_dir']}/#{@stanza_type}"
-        @stanza_dir = "#{@stanza_base_dir}/#{@stanza_name}"
-        mkdir(@stanza_dir) unless File.exist?(@stanza_dir)
-      else
-        raise "Error: No Stanza config (#{@stanza_name}) exists."
-      end
-    end
-
-    def current_stanza
-      @stanza_config[@stanza_name]
+      raise StanzaConfigNotFound, "No stanza config found: stanza name '#{name}'" unless @config.stanza.key?(name)
     end
 
     def generate
-      STDERR.puts "Generate stanza: #{@stanza_name}"
+      mkdir(stanza_base_dir) unless File.exist?(stanza_base_dir)
+      STDERR.puts "Generate stanza: #{name}"
 
-      case stanza_version
-      when 'ruby'
-        Ruby.new(@config_dir).generate
-      when 'javascript'
-        JavaScript.new(@config_dir).generate
-      else
-      end
+      generate_template
+      update_metadata_json
+      update_stanza_html
+      generate_sparql
     end
 
-    def generate_template
-      stdout, stderr, status = Open3.capture3("#{@generate_template_cmd}")
+    def output_metadata_json(metadata)
+      output_to_file(metadata_json_fpath, JSON.pretty_generate(metadata))
+    end
 
-      if status.success?
-        STDERR.puts 'Stanza template has been generated successfully.'
-        case @stanza_type
-        when 'javascript'
-          STDERR.puts "To view the stanza, run (cd #{@stanza_base_dir}; ts server) and open http://localhost:8080/"
-        when 'ruby'
-          STDERR.puts "To view the stanza, run (cd #{@stanza_base_dir}; bundle exec rackup) and open http://localhost:9292/"
-        end
-        #puts stdout
-        #puts stderr
-      else
-        STDERR.puts 'Generating stanza template failed.'
-        STDERR.puts stderr
+    def update_metadata_json
+      output_metadata_json(metadata_hash)
+    end
+
+    def update_stanza_html
+      output_to_file(stanza_html_fpath, stanza_html)
+    end
+
+    def generate_sparql
+      output_to_file(sparql_fpath, sparql_query)
+    end
+
+    def metadata_hash(prefix = '')
+      metadata = {}
+
+      metadata["#{prefix}parameter"] = parameters_for_metadata(prefix)
+      metadata["#{prefix}label"] = label
+      metadata["#{prefix}definition"] = definition
+
+      if @config.metadata?
+        metadata["#{prefix}provider"] = provider
+        metadata["#{prefix}license"] = licenses.join("\n")
+        metadata["#{prefix}author"] = creators.join(', ')
       end
+
+      metadata
     end
 
     def parameters_for_metadata(prefix = '')
       params = []
 
-      metadata_parameters.each do |key, parameter|
+      parameters.each do |key, parameter|
         params << {
             "#{prefix}key" => key,
             "#{prefix}example" => parameter['example'],
@@ -73,12 +71,22 @@ class RDFConfig
       params
     end
 
+    def sparql_query
+      sparql_builder = SPARQL::SPARQLBuilder.new
+
+      sparql_builder.add_builder(sparql_prefix_builder)
+      sparql_builder.add_builder(sparql_select_builder)
+      sparql_builder.add_builder(sparql_where_builder)
+
+      sparql_builder.build.join("\n")
+    end
+
     def sparql_result_html(suffix = '', indent_chars = '  ')
       lines = []
 
-      lines << "{{#each #{@stanza_name}}}"
+      lines << "{{#each #{name}}}"
       lines << %(#{indent_chars}<dl class="dl-horizontal">)
-      variables.each do |var_name|
+      sparql.variables.each do |var_name|
         lines << "#{indent_chars * 2}<dt>#{var_name}</dt><dd>{{#{var_name}#{suffix}}}</dd>"
       end
       lines << "#{indent_chars}</dl>"
@@ -87,57 +95,121 @@ class RDFConfig
       lines.join("\n")
     end
 
-    def sparql_query
-      sparql_lines = @sparql.prefix_lines_for_sparql(variables, stanza_parameters)
-      sparql_lines << ''
-      sparql_lines << %(SELECT #{variables.map { |variable| "?#{variable}" }.join(' ')})
-      sparql_lines << 'WHERE {'
-      sparql_lines += sparql_where_lines
-      sparql_lines << '}'
-
-      sparql_lines.join("\n")
+    def sparql
+      @sparql ||= SPARQL.new(@config, sparql_query_name: stanza_conf['sparql'])
     end
 
-    def sparql_where_lines
-      lines = @sparql.values_lines(sparql_hbs_parameters)
-      lines += @sparql.where_phase_lines(variables)
-
-      lines
+    def name
+      @name = if @opts[:stanza_name].to_s.empty?
+                DEFAULT_NAME
+              else
+                @opts[:stanza_name]
+              end
     end
 
-    def sparql_hbs_parameters
-      params = {}
-      stanza_parameters.keys.each do |var_name|
-        params[var_name] = %({{#{var_name}}})
+    def output_dir
+      stanza_conf['output_dir']
+    end
+
+    def label
+      stanza_conf['label']
+    end
+
+    def definition
+      stanza_conf['definition']
+    end
+
+    def parameters
+      stanza_conf['parameters']
+    end
+
+    def provider
+      metadata_conf['provider'].to_s
+    end
+
+    def creators
+      if metadata_conf.key?('creators')
+        case metadata_conf['creators']
+        when Array
+          case metadata_conf['creators'].first
+          when Hash
+            metadata_conf['creators'].map { |creator| creator['name'] }
+          else
+            metadata_conf['creators']
+          end
+        else
+          [metadata_conf['creators']]
+        end
+      else
+        []
       end
-
-      params
     end
 
-    def metadata_parameters
-      current_stanza['parameters']
+    def licenses
+      if metadata_conf.key?('licenses')
+        case metadata_conf['licenses']
+        when Array
+          metadata_conf['licenses']
+        else
+          [metadata_conf['licenses']]
+        end
+      else
+        []
+      end
     end
 
-    def stanza_parameters
-      @sparql.parameters
+    private
+
+    def stanza_conf
+      @stanza ||= @config.stanza[name]
     end
 
-    def variables
-      @sparql.variables
+    def metadata_conf
+      @metadata ||= @config.metadata
+    end
+
+    def sparql_prefix_builder
+      @sparql_prefix_builder = SPARQL::PrefixBuilder.new(
+          @config, sparql_query_name: stanza_conf['sparql']
+      )
+    end
+
+    def sparql_select_builder
+      @sparql_select_builder = SPARQL::SelectBuilder.new(
+          @config, sparql_query_name: stanza_conf['sparql']
+      )
+    end
+
+    def sparql_where_builder
+      @sparql_select_builder = SPARQL::WhereBuilder.new(
+          @config,
+          sparql_query_name: stanza_conf['sparql'], template: true
+      )
     end
 
     def mkdir(dir)
       FileUtils.mkdir_p(dir)
     end
 
-    def output_metadata_json(metadata)
-      File.open(metadata_json_fpath, 'w') do |f|
-        f.puts JSON.pretty_generate(metadata)
+    def output_to_file(fpath, data)
+      File.open(fpath, 'w') do |f|
+        f.puts data
       end
     end
 
-    def metadata_json_fpath
-      "#{@stanza_dir}/metadata.json"
+    def stanza_base_dir
+      "#{output_dir}/#{@stanza_type}"
     end
+
+    def stanza_dir
+      "#{stanza_base_dir}/#{name}"
+    end
+
+    def metadata_json_fpath
+      "#{stanza_dir}/metadata.json"
+    end
+
+    class StanzaConfigNotFound < StandardError; end
+    class StanzaExecutionFailure < StandardError; end
   end
 end

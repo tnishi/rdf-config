@@ -17,7 +17,6 @@ args = GetoptLong.new(
   [ '--config',   '-c',  GetoptLong::REQUIRED_ARGUMENT ],
   [ '--help',     '-h',  GetoptLong::NO_ARGUMENT ],
   [ '--senbero',         GetoptLong::NO_ARGUMENT ],
-  [ '--chart',           GetoptLong::OPTIONAL_ARGUMENT ],
   [ '--schema',          GetoptLong::OPTIONAL_ARGUMENT ],
   [ '--sparql',          GetoptLong::OPTIONAL_ARGUMENT ],
   [ '--query',           GetoptLong::OPTIONAL_ARGUMENT ],
@@ -33,8 +32,6 @@ args.each_option do |name, value|
     opts[:config_dir] = value
   when /--senbero/
     opts[:mode] = :senbero
-  when /--chart/
-    opts[:mode] = :chart
   when /--schema/
     opts[:mode] = :chart
   when /--sparqlist/

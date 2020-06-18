@@ -31,21 +31,25 @@ class RDFConfig
         model.size == idx + 1 || model[idx].property_path != model[idx + 1].property_path
       end
 
+      def subject_name
+        @subject.name
+      end
+
       def object_name
-        case object
+        case @object
         when Model::Subject
-          object.as_object_name(subject.name)
+          @object.as_object_name(subject.name)
         else
-          object.name
+          @object.name
         end
       end
 
       def object_value
-        case object
+        case @object
         when Model::Subject
-          object.as_object_value(subject.name)
+          @object.as_object_value(subject.name)
         else
-          object.value
+          @object.value
         end
       end
     end
@@ -84,6 +88,10 @@ class RDFConfig
 
       def blank_node?
         @name.is_a?(Array)
+      end
+
+      def objects
+        @predicates.map(&:objects).flatten
       end
 
       def add_predicates(predicate_object_hashes)
@@ -132,10 +140,11 @@ class RDFConfig
     end
 
     class Predicate
-      attr_reader :uri, :objects, :cardinality
+      attr_reader :name, :uri, :objects, :cardinality
 
       def initialize(predicate, prefix_hash = {})
-        @uri = predicate
+        @name = predicate
+        @uri = predicate == 'a' ? 'rdf:type' : predicate
         @prefix_hash = prefix_hash
         @cardinality = nil
 
@@ -150,10 +159,6 @@ class RDFConfig
 
       def rdf_type?
         %w[a rdf:type].include?(@uri)
-      end
-
-      def sparql_optional_phrase?
-        @cardinality.is_a?(Cardinality) && (@cardinality.min.nil? || @cardinality.min == 0)
       end
 
       private
@@ -349,6 +354,10 @@ class RDFConfig
 
       def blank_node?
         true
+      end
+
+      def rdf_type_uri
+        @name
       end
     end
 
