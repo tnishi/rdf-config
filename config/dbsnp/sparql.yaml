@@ -8,6 +8,8 @@ sparql:
     - position
     - reference_allele
     - allele
+    - alternative_allele
+    - valiation
 
 stanza:
   description: Obrain short genetic valiations from dbSNP

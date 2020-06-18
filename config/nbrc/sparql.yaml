@@ -3,7 +3,7 @@ sparql:
   variables: [nbrc_id, clade, name, alias, taxid, attribute, habitat]
   parameters:
     nbrc_id: NBRC_00100650
-    attribute: obo:GAZ_00002747
+    attribute: meo:MEO_0000198
 
 ---
 
