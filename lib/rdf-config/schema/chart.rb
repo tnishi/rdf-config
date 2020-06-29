@@ -1,30 +1,36 @@
+require 'rexml/document'
+require 'rdf-config/schema/chart/constant'
+require 'rdf-config/schema/chart/subject_generator'
+require 'rdf-config/schema/chart/predicate_generator'
+require 'rdf-config/schema/chart/class_node_generator'
+require 'rdf-config/schema/chart/uri_node_generator'
+require 'rdf-config/schema/chart/literal_node_generator'
+require 'rdf-config/schema/chart/blank_node_generator'
+require 'rdf-config/schema/chart/unknown_node_generator'
+
+class REXML::Element
+  def add_attribute_by_hash(attr_hash)
+    attr_hash.each do |name, value|
+      add_attribute(name.to_s, value)
+    end
+  end
+end
+
 class RDFConfig
   class Schema
     class Chart
-      require 'rexml/document'
-      class REXML::Element
-        def add_attribute_by_hash(attr_hash)
-          attr_hash.each do |name, value|
-            add_attribute(name.to_s, value)
-          end
-        end
-      end
-
-      require 'rdf-config/schema/chart/svg_element_opt'
-      require 'rdf-config/schema/chart/svg_element'
-      include SVGElementOpt
-      include SVGElement
+      include Constant
 
       Position = Struct.new(:x, :y)
       ArrowPosition = Struct.new(:x1, :y1, :x2, :y2)
 
       START_X = 50.freeze
       START_Y = 10.freeze
-      YPOS_CHANGE_NUM_OBJ = 8.freeze
 
       def initialize(config)
         @model = Model.new(config)
-        @svg_element = svg_element
+        generate_svg_element
+        add_to_svg(style_element)
 
         @current_pos = Position.new(START_X, START_Y)
         @subject_queue = []
@@ -34,7 +40,7 @@ class RDFConfig
 
       def generate
         @model.subjects.each do |subject|
-          generate_subject(subject)
+          generate_subject_graph(subject)
         end
 
         output_svg
@@ -44,9 +50,9 @@ class RDFConfig
         width = @element_pos.values.flatten.map(&:x).max + RECT_WIDTH + 100
         height = @element_pos.values.flatten.map(&:y).max + RECT_HEIGHT + MARGIN_RECT + 100
         svg_opts = {
-            width: "#{width}px",
-            height: "#{height}px",
-            viewBox: "-0.5 -0.5 #{width} #{height}"
+          width: "#{width}px",
+          height: "#{height}px",
+          viewBox: "-0.5 -0.5 #{width} #{height}"
         }
         @svg_element.add_attribute_by_hash(svg_opts)
 
@@ -55,8 +61,8 @@ class RDFConfig
         xml.write($stdout, 2)
       end
 
-      def generate_subject(subject)
-        return if @generated_subjects.include?(subject.name)
+      def generate_subject_graph(subject)
+        return if subject_graph_generated?(subject.name)
 
         unless @element_pos.key?(subject.object_id)
           @element_pos[subject.object_id] = []
@@ -64,12 +70,8 @@ class RDFConfig
         @subject_queue.push(subject)
         add_element_position
 
-        if subject.blank_node?
-          add_to_svg(blank_node_elements(@current_pos))
-        else
-          inner_texts = [subject.name, subject.value]
-          add_to_svg(uri_elements(@current_pos, inner_texts, :instance))
-        end
+        generator = SubjectGenerator.new(subject, @current_pos)
+        add_to_svg(generator.generate)
 
         subject.predicates.each do |predicate|
           predicate.objects.each do |object|
@@ -78,44 +80,45 @@ class RDFConfig
           end
         end
 
-        @generated_subjects << subject.name unless subject.blank_node?
+        add_subject(subject.name) unless subject.blank_node?
         @subject_queue.pop
       end
 
       def generate_predicate_object(predicate, object)
         move_to_predicate
-        generate_predicate(predicate, object)
+        generate_predicate(predicate)
 
         # move object position after generating predicate
         @current_pos.x += PREDICATE_AREA_WIDTH
         generate_object(predicate, object)
       end
 
-      def generate_predicate(predicate, object)
-        add_to_svg(
-            predicate_arrow_elements(predicate_arrow_position(object), predicate)
-        )
+      def generate_predicate(predicate)
+        predicate_generator = PredicateGenerator.new(predicate, predicate_arrow_position)
+        add_to_svg(predicate_generator.generate)
       end
 
       def generate_object(predicate, object)
         add_element_position
 
         if object.instance_of?(Model::Subject)
-          generate_subject(object)
+          generate_subject_graph(object)
         elsif object.blank_node?
-          generate_subject(object.value)
+          generate_subject_graph(object.value)
         elsif predicate.rdf_type?
-          add_to_svg(uri_elements(@current_pos, object.name, :class))
+          generator = ClassNodeGenerator.new(object, @current_pos)
+          add_to_svg(generator.generate)
         else
-          inner_texts = [object.name, object.value]
           case object
           when Model::Unknown
-            add_to_svg(unknown_object_elements(@current_pos, inner_texts[0]))
+            generator = UnknownNodeGenerator.new(object, @current_pos)
           when Model::URI
-            add_to_svg(uri_elements(@current_pos, inner_texts))
+            generator = URINodeGenerator.new(object, @current_pos)
           when Model::Literal
-            add_to_svg(object_literal_elements(@current_pos, inner_texts, object.type))
+            generator = LiteralNodeGenerator.new(object, @current_pos)
           end
+
+          add_to_svg(generator.generate) if generator
         end
       end
 
@@ -131,20 +134,12 @@ class RDFConfig
                          end
       end
 
-      def predicate_arrow_position(object)
-        y1 = if current_subject.blank_node?
-               subject_position(current_subject).y + BNODE_RADIUS
-             else
-               subject_position(current_subject).y + RECT_HEIGHT / 2
-             end
+      def predicate_arrow_position
+        y1 = subject_position(current_subject).y + RECT_HEIGHT / 2
+        y2 = @current_pos.y + RECT_HEIGHT / 2
 
-        y2 = if object.blank_node?
-               @current_pos.y + BNODE_RADIUS
-             else
-               @current_pos.y + RECT_HEIGHT / 2
-             end
-
-        ArrowPosition.new(@current_pos.x, y1, @current_pos.x + PREDICATE_AREA_WIDTH, y2)
+        ArrowPosition.new(@current_pos.x, y1,
+                          @current_pos.x + PREDICATE_AREA_WIDTH, y2)
       end
 
       def move_to_next_object
@@ -168,6 +163,37 @@ class RDFConfig
         doc
       end
 
+      def generate_svg_element
+        @svg_element = REXML::Element.new('svg')
+        @svg_element.add_attribute('xmlns', 'http://www.w3.org/2000/svg')
+        @svg_element.add_attribute('style', 'background-color: rgb(255, 255, 255);')
+      end
+
+      def style_element
+        style = REXML::Element.new('style')
+        style.add_attribute('type', 'text/css')
+        style.add_text(<<-STYLE)
+	.st0 {fill:#FFCE9F;}
+	.st1 {fill:none;stroke:#000000;stroke-width:2;}
+	.st2 {opacity:0.6;}
+	.st3 {font-family:'Helvetica';}
+	.st4 {font-size:11px;}
+	.st5 {fill:#FFFFFF;}
+	.st6 {font-family:'Helvetica-Bold';}
+	.st7 {font-size:12px;}
+	.st8 {opacity:0.7;fill:#FFFFFF;}
+	.st9 {fill:#F8CECC;stroke:#000000;stroke-width:2;}
+	.st10 {fill:#FFF4C3;}
+	.st11 {fill:none;stroke:#000000;stroke-width:2;stroke-miterlimit:10;stroke-dasharray:4,4;}
+	.st12 {fill:none;stroke:#000000;stroke-width:2;stroke-miterlimit:10;}
+	.st13 {enable-background:new;}
+	.st14 {fill:#F2F2E9;}
+	.st15 {fill:none;stroke:#000000;stroke-width:2;stroke-dasharray:3.926,3.926;}
+        STYLE
+
+        style
+      end
+
       def add_to_svg(element)
         case element
         when Array
@@ -179,12 +205,16 @@ class RDFConfig
         end
       end
 
-      def add_element_position
-        @element_pos[current_subject.object_id] << @current_pos.dup
+      def add_subject(subject)
+        @generated_subjects << subject
       end
 
-      def style_value_by_hash(hash)
-        hash.map { |name, value| "#{name}: #{value}" }.join('; ')
+      def subject_graph_generated?(subject_name)
+        @generated_subjects.include?(subject_name)
+      end
+
+      def add_element_position
+        @element_pos[current_subject.object_id] << @current_pos.dup
       end
 
       def distance(x1, y1, x2, y2)

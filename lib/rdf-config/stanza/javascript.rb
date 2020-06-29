@@ -9,23 +9,20 @@ class RDFConfig
         super
       end
 
-      def generate
-        super
-        update_index_js
-      end
-
       def generate_template
         Dir.chdir(stanza_base_dir) do
-          stdout, stderr, status = Open3.capture3("ts new #{name}")
+          stdout, stderr, status = Open3.capture3("ts new #{@name}")
           unless  status.success?
             raise StanzaExecutionFailure, "ERROR: Stanza files creation failed.\n#{stderr}"
           end
         end
 
-        STDERR.puts 'Stanza template has been generated successfully.'
-        STDERR.puts "To view the stanza, run (cd #{stanza_base_dir}; ts server) and open http://localhost:8080/"
       rescue Errno::ENOENT => e
         raise StanzaExecutionFailure, "#{e.message}\nMake sure ts command is installed or ts command path is set in your PATH environment variable."
+      end
+
+      def generate_versionspecific_files
+        update_index_js
       end
 
       def update_index_js
@@ -43,7 +40,7 @@ class RDFConfig
         end.join(' ')
 
         metadata = JSON.parse(File.read(metadata_json_fpath))
-        metadata['stanza:usage'] = "<togostanza-#{name} #{stanza_usage_attr}></togostanza-#{name}>"
+        metadata['stanza:usage'] = "<togostanza-#{@name} #{stanza_usage_attr}></togostanza-#{@name}>"
 
         metadata.merge(super('stanza:'))
       end
@@ -66,12 +63,17 @@ Stanza(function(stanza, params) {
     stanza.render({
       template: "stanza.html",
       parameters: {
-        #{name}: rows
+        #{@name}: rows
       },
     });
   });
 });
         EOS
+      end
+
+      def after_generate
+        super
+        STDERR.puts "To view the stanza, run (cd #{stanza_base_dir}; ts server) and open http://localhost:8080/"
       end
 
       def index_js_fpath

@@ -9,30 +9,33 @@ class RDFConfig
         super
       end
 
-      def generate
-        super
-        update_stanza_rb
-      end
-
       def generate_template
-        if require_stanza_init?
-          stdout, stderr, status = Open3.capture3("togostanza init #{stanza_base_dir}")
-          unless status.success?
-            raise StanzaExecutionFailure, "ERROR: Stanza init execution failed.\n#{stderr}"
-          end
-        end
+        setup_stanza_provider if require_stanza_init?
 
         Dir.chdir(stanza_base_dir) do
-          stdout, stderr, status = Open3.capture3("togostanza stanza new #{name}")
+          stdout, stderr, status = Open3.capture3("togostanza stanza new #{@name}")
           unless status.success?
             raise StanzaExecutionFailure, "ERROR: Stanza files creation failed.\n#{stderr}"
           end
         end
-
-        STDERR.puts 'Stanza template has been generated successfully.'
-        STDERR.puts "To view the stanza, run (cd #{stanza_base_dir}; bundle exec rackup) and open http://localhost:9292/"
       rescue Errno::ENOENT => e
         raise StanzaExecutionFailure, "#{e.message}\nMake sure togostanza command is installed or togostanza command path is set in your PATH environment variable."
+      end
+
+      def setup_stanza_provider
+        STDERR.write "Setup togostanza provider. It will take a while ... "
+        STDERR.flush
+        stdout, stderr, status = Open3.capture3("togostanza init #{stanza_base_dir}")
+        unless status.success?
+          STDERR.puts
+          raise StanzaExecutionFailure, "ERROR: Stanza init execution failed.\n#{stderr}"
+        end
+
+        STDERR.puts "done ."
+      end
+
+      def generate_versionspecific_files
+        update_stanza_rb
       end
 
       def update_stanza_rb
@@ -72,7 +75,7 @@ class RDFConfig
       def stanza_ruby
         <<-EOS
 #{ruby_class_def_line}
-  property :#{name} do |#{sparql.parameters.keys.join(', ')}|
+  property :#{@name} do |#{sparql.parameters.keys.join(', ')}|
     query('#{sparql.endpoint}', '#{sparql_fname}')
   end
 end
@@ -91,6 +94,11 @@ end
         class_def_line
       end
 
+      def after_generate
+        super
+        STDERR.puts "To view the stanza, run (cd #{stanza_base_dir}; bundle exec rackup) and open http://localhost:9292/"
+      end
+
       def require_stanza_init?
         !File.exist?("#{stanza_base_dir}/Gemfile.lock")
       end
@@ -104,7 +112,7 @@ end
       end
 
       def sparql_fname
-        "#{name}.hbs"
+        "#{@name}.hbs"
       end
 
       def sparql_fpath
@@ -112,14 +120,12 @@ end
       end
 
       def stanza_dir
-        if /_stanza\z/ =~ name
+        if /_stanza\z/ =~ @name
           super
         else
           "#{super}_stanza"
         end
       end
-
-      private :stanza_dir
     end
   end
 end

@@ -5,23 +5,36 @@ require 'rdf-config/stanza/ruby'
 
 class RDFConfig
   class Stanza
-    DEFAULT_NAME = 'stanza'.freeze
-
     def initialize(config, opts = {})
       @config = config
-      @opts = opts
 
-      raise StanzaConfigNotFound, "No stanza config found: stanza name '#{name}'" unless @config.stanza.key?(name)
+      stanza_name = opts[:stanza_name].to_s
+      if stanza_name.empty?
+        @targets = config.stanza.keys
+      else
+        raise StanzaConfigNotFound, "No stanza config found: stanza name '#{stanza_name}'" unless config.stanza.key?(stanza_name)
+        @targets = [stanza_name]
+      end
     end
 
     def generate
+      before_generate
+      @targets.each do |stanza_name|
+        @name = stanza_name
+        generate_one_stanza
+      end
+      after_generate
+    end
+
+    def generate_one_stanza
       mkdir(stanza_base_dir) unless File.exist?(stanza_base_dir)
-      STDERR.puts "Generate stanza: #{name}"
+      STDERR.puts "Generate stanza: #{@name}"
 
       generate_template
       update_metadata_json
       update_stanza_html
       generate_sparql
+      generate_versionspecific_files
     end
 
     def output_metadata_json(metadata)
@@ -46,12 +59,6 @@ class RDFConfig
       metadata["#{prefix}parameter"] = parameters_for_metadata(prefix)
       metadata["#{prefix}label"] = label
       metadata["#{prefix}definition"] = definition
-
-      if @config.metadata?
-        metadata["#{prefix}provider"] = provider
-        metadata["#{prefix}license"] = licenses.join("\n")
-        metadata["#{prefix}author"] = creators.join(', ')
-      end
 
       metadata
     end
@@ -84,7 +91,7 @@ class RDFConfig
     def sparql_result_html(suffix = '', indent_chars = '  ')
       lines = []
 
-      lines << "{{#each #{name}}}"
+      lines << "{{#each #{@name}}}"
       lines << %(#{indent_chars}<dl class="dl-horizontal">)
       sparql.variables.each do |var_name|
         lines << "#{indent_chars * 2}<dt>#{var_name}</dt><dd>{{#{var_name}#{suffix}}}</dd>"
@@ -97,14 +104,6 @@ class RDFConfig
 
     def sparql
       @sparql ||= SPARQL.new(@config, sparql_query_name: stanza_conf['sparql'])
-    end
-
-    def name
-      @name = if @opts[:stanza_name].to_s.empty?
-                DEFAULT_NAME
-              else
-                @opts[:stanza_name]
-              end
     end
 
     def output_dir
@@ -123,49 +122,16 @@ class RDFConfig
       stanza_conf['parameters']
     end
 
-    def provider
-      metadata_conf['provider'].to_s
-    end
-
-    def creators
-      if metadata_conf.key?('creators')
-        case metadata_conf['creators']
-        when Array
-          case metadata_conf['creators'].first
-          when Hash
-            metadata_conf['creators'].map { |creator| creator['name'] }
-          else
-            metadata_conf['creators']
-          end
-        else
-          [metadata_conf['creators']]
-        end
-      else
-        []
-      end
-    end
-
-    def licenses
-      if metadata_conf.key?('licenses')
-        case metadata_conf['licenses']
-        when Array
-          metadata_conf['licenses']
-        else
-          [metadata_conf['licenses']]
-        end
-      else
-        []
-      end
-    end
-
     private
 
-    def stanza_conf
-      @stanza ||= @config.stanza[name]
+    def before_generate; end
+
+    def after_generate
+      STDERR.puts 'Stanza template has been generated successfully.'
     end
 
-    def metadata_conf
-      @metadata ||= @config.metadata
+    def stanza_conf
+      @stanza ||= @config.stanza[@name]
     end
 
     def sparql_prefix_builder
@@ -202,7 +168,7 @@ class RDFConfig
     end
 
     def stanza_dir
-      "#{stanza_base_dir}/#{name}"
+      "#{stanza_base_dir}/#{@name}"
     end
 
     def metadata_json_fpath

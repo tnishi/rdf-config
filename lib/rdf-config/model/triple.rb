@@ -52,6 +52,10 @@ class RDFConfig
           @object.value
         end
       end
+
+      def bnode_connecting?
+        @predicates.size > 1
+      end
     end
 
     class Subject
