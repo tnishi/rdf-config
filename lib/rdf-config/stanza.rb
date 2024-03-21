@@ -1,23 +1,44 @@
 require 'fileutils'
-require 'rdf-config/sparql/sparql_generator'
+require 'rdf-config/sparql'
+require 'rdf-config/sparql/validator'
 require 'rdf-config/stanza/javascript'
 require 'rdf-config/stanza/ruby'
 
 class RDFConfig
   class Stanza
+    YAML_SPARQL_KEY = 'sparql'.freeze
+
     def initialize(config, opts = {})
       @config = config
+      @opts = opts
 
-      stanza_name = opts[:stanza_name].to_s
-      if stanza_name.empty?
+      @stanza_name = opts[:stanza_name].to_s
+      if @stanza_name.empty?
         @targets = config.stanza.keys
       else
-        raise StanzaConfigNotFound, "No stanza config found: stanza name '#{stanza_name}'" unless config.stanza.key?(stanza_name)
-        @targets = [stanza_name]
+        unless config.stanza.key?(@stanza_name)
+          raise StanzaConfigNotFound, "ERROR: No stanza config found: stanza name '#{@stanza_name}'"
+        end
+
+        @name = @stanza_name
+        @targets = [@stanza_name]
       end
     end
 
+    def print_usage
+      print_stanza_usage if @stanza_name.empty?
+      sparql.print_usage if sparql.print_usage?
+      warn ''
+    end
+
+    def print_usage?
+      @stanza_name.empty? || sparql.print_usage?
+    end
+
     def generate
+      validator = RDFConfig::SPARQL::Validator.instance(@config, opts_for_initialize_sparql)
+      validator.validate
+
       before_generate
       @targets.each do |stanza_name|
         @name = stanza_name
@@ -28,7 +49,7 @@ class RDFConfig
 
     def generate_one_stanza
       mkdir(stanza_base_dir) unless File.exist?(stanza_base_dir)
-      STDERR.puts "Generate stanza: #{@name}"
+      warn "Generate stanza: #{@name}"
 
       generate_template
       update_metadata_json
@@ -68,10 +89,10 @@ class RDFConfig
 
       parameters.each do |key, parameter|
         params << {
-            "#{prefix}key" => key,
-            "#{prefix}example" => parameter['example'],
-            "#{prefix}description" => parameter['description'],
-            "#{prefix}required" => parameter['required'],
+          "#{prefix}key" => key,
+          "#{prefix}example" => parameter['example'],
+          "#{prefix}description" => parameter['description'],
+          "#{prefix}required" => parameter['required']
         }
       end
 
@@ -79,31 +100,49 @@ class RDFConfig
     end
 
     def sparql_query
-      sparql_generator = SPARQL::SPARQLGenerator.new
-
-      sparql_generator.add_generator(sparql_prefix_generator)
-      sparql_generator.add_generator(sparql_select_generator)
-      sparql_generator.add_generator(sparql_where_generator)
-
-      sparql_generator.generate.join("\n")
+      sparql.generate
     end
 
     def sparql_result_html(suffix = '', indent_chars = '  ')
-      lines = []
+      lines = ['<table>']
+
+      lines << "#{indent_chars}<tr>"
+      sparql.variables.each do |var_name|
+        lines << "#{indent_chars * 2}<th>#{var_name}</th>"
+      end
+      lines << "#{indent_chars}</tr>"
 
       lines << "{{#each #{@name}}}"
-      lines << %(#{indent_chars}<dl class="dl-horizontal">)
+      lines << "#{indent_chars}<tr>"
       sparql.variables.each do |var_name|
-        lines << "#{indent_chars * 2}<dt>#{var_name}</dt><dd>{{#{var_name}#{suffix}}}</dd>"
+        lines << "#{indent_chars * 2}<td>{{#{var_name}.value}}</td>"
       end
-      lines << "#{indent_chars}</dl>"
+      lines << "#{indent_chars}</tr>"
       lines << '{{/each}}'
+      lines << '</table>'
 
       lines.join("\n")
     end
 
-    def sparql
-      @sparql ||= SPARQL.new(@config, sparql_query_name: stanza_conf['sparql'])
+    def sparql_result_html_dd(suffix = '', indent_chars = '  ')
+      lines = ["{{#each #{@name}}}"]
+
+      unless parameters.empty?
+        first_parameter_name = parameters.keys.first
+        lines << '<p class="greeting">'
+        lines << "#{first_parameter_name}: {{#{first_parameter_name}.value}}"
+        lines << '</p>'
+      end
+
+      sparql.variables.each do |var_name|
+        lines << '<dl>'
+        lines << "#{indent_chars}<dt>#{var_name}</dt>"
+        lines << "#{indent_chars}<dd>{{#{var_name}.value}}</dd>"
+        lines << '</dl>'
+      end
+      lines << '{{/each}}'
+
+      lines.join("\n")
     end
 
     def output_dir
@@ -122,35 +161,32 @@ class RDFConfig
       stanza_conf['parameters']
     end
 
+    def sparql
+      @sparql ||= SPARQL.new(@config, opts_for_initialize_sparql)
+    end
+
     private
 
     def before_generate; end
 
     def after_generate
-      STDERR.puts 'Stanza template has been generated successfully.'
+      warn 'Stanza template has been generated successfully.'
     end
 
     def stanza_conf
-      @stanza ||= @config.stanza[@name]
+      @stanza_conf ||= @config.stanza[@stanza_name]
     end
 
-    def sparql_prefix_generator
-      @sparql_prefix_generator = SPARQL::PrefixGenerator.new(
-          @config, sparql_query_name: stanza_conf['sparql']
-      )
+    def sparql_name
+      if stanza_conf.is_a?(Hash) && stanza_conf.key?(YAML_SPARQL_KEY)
+        stanza_conf[YAML_SPARQL_KEY]
+      else
+        @config.sparql.keys.first
+      end
     end
 
-    def sparql_select_generator
-      @sparql_select_generator = SPARQL::SelectGenerator.new(
-          @config, sparql_query_name: stanza_conf['sparql']
-      )
-    end
-
-    def sparql_where_generator
-      @sparql_select_generator = SPARQL::WhereGenerator.new(
-          @config,
-          sparql_query_name: stanza_conf['sparql'], template: true
-      )
+    def sparql_conf
+      @sparql_conf ||= @config.sparql[sparql_name]
     end
 
     def mkdir(dir)
@@ -173,6 +209,36 @@ class RDFConfig
 
     def metadata_json_fpath
       "#{stanza_dir}/metadata.json"
+    end
+
+    def opts_for_initialize_sparql
+      @opts.merge(
+        sparql: sparql_name,
+        template: true,
+        sparql_comment: false
+      )
+    end
+
+    def print_stanza_usage
+      warn 'Usage: --stanza stanza_name [--query var=value] [--endpoint endpoint_name]'
+      warn "Available stanza names: #{@config.stanza.keys.join(', ')}"
+      lines = []
+      @config.stanza.each_key do |stanza_name|
+        sparql_name = @config.stanza[stanza_name]['sparql']
+        next if !@config.sparql.key?(sparql_name) || !@config.sparql[sparql_name].key?('parameters')
+
+        parameters = @config.sparql[sparql_name]['parameters']
+        next unless parameters.is_a?(Hash)
+
+        lines << "  stanza_name: #{stanza_name}, sparql_name: #{sparql_name}, parameters: #{parameters.keys.join(', ')}"
+      end
+
+      return if lines.empty?
+
+      warn 'Preset SPARQL query parameters (use --query to override):'
+      lines.each do |line|
+        warn line
+      end
     end
 
     class StanzaConfigNotFound < StandardError; end

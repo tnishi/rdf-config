@@ -5,15 +5,13 @@ class RDFConfig
   class Model
     include Enumerable
 
-    @@validate_done = false
-    @@output_warning = false
+    @@validate_done = {}
+    @@output_warning = {}
     @@instance = {}
 
     class << self
       def instance(config)
-        unless @@instance.key?(config.object_id)
-          @@instance[config.object_id] = Model.new(config)
-        end
+        @@instance[config.object_id] = Model.new(config) unless @@instance.key?(config.object_id)
 
         @@instance[config.object_id]
       end
@@ -21,18 +19,20 @@ class RDFConfig
 
     def initialize(config)
       @config = config
+      @warnings = []
+
       @graph = Graph.new(@config)
       @graph.generate
       generate_triples
 
-      unless @@validate_done
-        validate
-        @@validate_done = true
-      end
+      return if @@validate_done[@config.name]
+
+      validate
+      @@validate_done[@config.name] = true
     end
 
-    def each
-      @triples.each { |t| yield(t) }
+    def each(&block)
+      @triples.each(&block)
     end
 
     def find_subject(subject_name)
@@ -41,6 +41,10 @@ class RDFConfig
 
     def subject?(variable_name)
       !find_subject(variable_name).nil?
+    end
+
+    def triples_by_subject_name(subject_name)
+      @triples.select { |triple| triple.subject.name == subject_name }
     end
 
     def find_by_predicates(predicates)
@@ -65,9 +69,9 @@ class RDFConfig
             @bnode_subjects.select { |bn_subj| bn_subj.predicates.include?(t.predicate) }.each do |s|
               bn_obj = s.objects.select { |o| o.blank_node? }.first
               if bn_obj
-                types << t.object_name
+                types << t.object_value
               else
-                types << t.object_name if s.objects.include?(triple.object)
+                types << t.object_value if s.objects.include?(triple.object)
               end
             end
           end
@@ -91,33 +95,39 @@ class RDFConfig
       end
     end
 
-    def find_by_object_name(object_name, opts = { only_first_triple: true })
-      triples = if subject?(object_name)
-                  @triples.select do |triple|
-                    case triple.object
-                    when Subject
-                      # reject triple with the same subject name and object value
-                      triple.subject.name != triple.object.as_object_value &&
-                        triple.object.as_object_value == object_name
-                    when ValueList
-                      triple.object.value.select do |obj|
-                        # reject triple with the same subject name and object value
-                        obj.is_a?(Subject) && triple.subject.name != obj.as_object_value
-                      end.map do |obj|
-                        obj.is_a?(Subject) && obj.as_object_value == object_name
-                      end.include?(true)
-                    else
-                      false
-                    end
-                  end
-                else
-                  @triples.select { |triple| triple.object_name == object_name }
-                end
+    def find_one_by_object_name(object_name)
+      find_all_by_object_name(object_name).first
+    end
 
-      if opts[:only_first_triple]
-        triples.first
+    def find_all_by_object_name(object_name)
+      if subject?(object_name)
+        @triples.select do |triple|
+          case triple.object
+          when Subject
+            # reject triple with the same subject name and object value
+            triple.subject.name != triple.object.as_object_value &&
+              triple.object.as_object_value == object_name
+          when ValueList
+            triple.object.value.select do |obj|
+              # reject triple with the same subject name and object value
+              obj.is_a?(Subject) && triple.subject.name != obj.as_object_value
+            end.map do |obj|
+              obj.is_a?(Subject) && obj.as_object_value == object_name
+            end.include?(true)
+          else
+            false
+          end
+        end
       else
-        triples
+        @triples.select { |triple| triple.object_name == object_name }
+      end
+    end
+
+    def find_by_object_name(object_name, opts = { only_first_triple: true })
+      if opts[:only_first_triple]
+        find_one_by_object_name(object_name)
+      else
+        find_all_by_object_name(object_name)
       end
     end
 
@@ -130,7 +140,14 @@ class RDFConfig
         break if !start_subject.nil? && triple.subject.name == start_subject
 
         triple = find_by_object_name(triple.subject.name)
-        break if !triple.nil? && triples.include?(triple)
+        break if triple.nil?
+        break if triples.include?(triple)
+
+        subject_names = triples.map { |t| t.subject.name }
+        if subject_names.include?(triple.subject.name)
+          triples.pop
+          break
+        end
       end
 
       triples.reverse
@@ -206,15 +223,24 @@ class RDFConfig
       validator.validate
 
       errors = @graph.errors + validator.errors
+      @warnings = @graph.warnings + validator.warnings
+
       unless errors.empty?
-        error_msg = %Q/ERROR: Invalid configuration. Please check the setting in model.yaml file.\n#{errors.map { |msg| "  #{msg}" }.join("\n")}/
+        error_msg = %(ERROR: Invalid configuration. Please check the setting in model.yaml file.\n#{errors.map { |msg|
+                                                                                                      "  #{msg}"
+                                                                                                    }.join("\n")})
         raise Config::InvalidConfig, error_msg
       end
 
-      if validator.warn? && !@@output_warning
-        STDERR.puts validator.warn_message
-        @@output_warning = true
-      end
+      return if @warnings.empty? || @@output_warning[@config.name]
+    end
+
+    def print_warnings
+      return if @warnings.empty?
+
+      warn ''
+      warn @warnings.map { |msg| "WARNING: #{msg}" }.join("\n")
+      @@output_warning[@config.name] = true
     end
 
     private

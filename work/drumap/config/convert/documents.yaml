@@ -1,0 +1,10 @@
+DruMAPDocument:
+  - source("~/workspace/rdf-config-convert/drumap/csv_files/documents.csv")
+  - $id: csv("id")
+  - "https://drumap.nibiohn.go.jp/rdf/document/$id"
+  - variables:
+    - drumap_document_id: $id
+    - drumap_document_label: csv("document")
+    - drumap_document_document_type_id:
+      - csv("document_type_id")
+      - prepend("https://drumap.nibiohn.go.jp/rdf/document_type/")

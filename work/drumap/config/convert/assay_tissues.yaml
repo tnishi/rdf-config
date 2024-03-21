@@ -1,0 +1,11 @@
+DruMAPAssayTissue:
+  - source("~/workspace/rdf-config-convert/drumap/csv_files/assay_tissues_subset.csv")
+  - $id: csv("id")
+  - "https://drumap.nibiohn.go.jp/rdf/assay_tissue/$id"
+  - variables:
+    - drumap_assay_tissue_id: $id
+    - drumap_assay_tissue_label: csv("name")
+    - drumap_assay_tissue_label:
+      - csv("jname")
+      - lang("ja")
+    - drumap_assay_tissue_description: csv("description")

@@ -1,0 +1,72 @@
+PATH
+  remote: .
+  specs:
+    rdf-config (1.0.0)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+    ast (2.4.2)
+    ebnf (2.3.5)
+      htmlentities (~> 4.3)
+      rdf (~> 3.2)
+      scanf (~> 1.0)
+      sxp (~> 1.2)
+      unicode-types (~> 1.8)
+    htmlentities (4.3.4)
+    json (2.7.1)
+    language_server-protocol (3.17.0.3)
+    link_header (0.0.8)
+    matrix (0.4.2)
+    parallel (1.24.0)
+    parser (3.3.0.5)
+      ast (~> 2.4.1)
+      racc
+    parslet (2.0.0)
+    racc (1.7.3)
+    rainbow (3.1.1)
+    rdf (3.2.11)
+      link_header (~> 0.0, >= 0.0.8)
+    rdf-turtle (3.2.1)
+      ebnf (~> 2.3)
+      rdf (~> 3.2)
+    rdf-xsd (3.2.1)
+      rdf (~> 3.2)
+      rexml (~> 3.2)
+    regexp_parser (2.9.0)
+    rexml (3.2.6)
+    rubocop (1.62.1)
+      json (~> 2.3)
+      language_server-protocol (>= 3.17.0)
+      parallel (~> 1.10)
+      parser (>= 3.3.0.2)
+      rainbow (>= 2.2.2, < 4.0)
+      regexp_parser (>= 1.8, < 3.0)
+      rexml (>= 3.2.5, < 4.0)
+      rubocop-ast (>= 1.31.1, < 2.0)
+      ruby-progressbar (~> 1.7)
+      unicode-display_width (>= 2.4.0, < 3.0)
+    rubocop-ast (1.31.2)
+      parser (>= 3.3.0.4)
+    ruby-progressbar (1.13.0)
+    scanf (1.0.0)
+    sxp (1.2.4)
+      matrix (~> 0.4)
+      rdf (~> 3.2)
+    unicode-display_width (2.5.0)
+    unicode-types (1.9.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  parslet
+  rdf
+  rdf-config!
+  rdf-turtle
+  rdf-xsd
+  rexml
+  rubocop
+
+BUNDLED WITH
+   2.1.4

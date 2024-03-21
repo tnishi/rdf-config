@@ -1,0 +1,57 @@
+require 'rdf/turtle'
+require_relative '../rdf_generator'
+require_relative '../macros/csv'
+
+class RDFConfig
+  class Convert
+    class CSV2RDF < RDFGenerator
+      def initialize(config, convert)
+        super
+      end
+
+      def generate
+        @convert.source_subject_map.each do |source, subject_names|
+          @reader = @convert.file_reader(source: source)
+          @subject_names = subject_names
+          generate_statements
+        end
+
+        output_rdf
+      end
+
+      private
+
+      def generate_statements
+        @reader.each_row do |row|
+          @converter.push_target_row(row, clear_variable: true)
+          generate_by_row(row)
+          @converter.pop_target_row
+        end
+      end
+
+      def generate_subject(subject_name, subject_value)
+        node = uri_node(subject_value)
+        add_subject_node(subject_name, node)
+        @model.find_subject(subject_name).types.each do |rdf_type|
+          @statements << RDF::Statement.new(node, RDF.type, uri_node(rdf_type))
+        end
+      end
+
+      def generate_by_triple(triple, values, value_idx)
+        subject = @subject_node[triple.subject.name][value_idx]
+        subject = @subject_node[triple.subject.name].first if subject.nil?
+        @statements << RDF::Statement.new(
+          subject,
+          predicate_node(triple.predicate.uri),
+          object_node_by_triple(triple, values[value_idx])
+        )
+      end
+
+      def add_subject_relation(triple, subject_node, object_node)
+        @statements << RDF::Statement.new(
+          subject_node, predicate_node(triple.predicate.uri), object_node
+        )
+      end
+    end
+  end
+end

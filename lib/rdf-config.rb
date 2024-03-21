@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+# frozen_string_literal: true
 
 require 'yaml'
 require 'json'
@@ -16,16 +17,23 @@ class RDFConfig
   require 'rdf-config/schema/chart'
   require 'rdf-config/grasp'
   require 'rdf-config/shex'
+  require 'rdf-config/convert'
 
   def initialize(opts = {})
-    @config = Config.new(opts[:config_dir])
+    @config = if opts[:config_dir].is_a?(Array)
+                opts[:config_dir].map { |config_dir| Config.new(config_dir) }
+              else
+                Config.new(opts[:config_dir])
+              end
     @opts = opts
   end
 
   def exec(opts)
     case opts[:mode]
     when :sparql
-      puts generate_sparql
+      generate_sparql
+    when :sparql_url
+      generate_sparql_url
     when :query
       run_sparql
     when :stanza_rb
@@ -39,13 +47,26 @@ class RDFConfig
     when :grasp
       generate_grasp
     when :shex
-      puts generate_shex
+      generate_shex
+    when :convert
+      convert
     end
   end
 
   def generate_sparql
     sparql = SPARQL.new(@config, @opts)
-    sparql.generate
+    if sparql.print_usage?
+      sparql.print_usage
+    else
+      puts sparql.generate
+      sparql.print_warnings
+    end
+  end
+
+  def generate_sparql_url
+    sparql = SPARQL.new(@config, @opts)
+    puts sparql.generate(url_encode: true)
+    sparql.print_warnings
   end
 
   def run_sparql
@@ -57,14 +78,18 @@ class RDFConfig
     stanza = Stanza::Ruby.new(@config, @opts)
     stanza.generate
   rescue Stanza::StanzaConfigNotFound, Stanza::StanzaExecutionFailure => e
-    STDERR.puts e
+    warn e
   end
 
   def generate_stanza_js
     stanza = Stanza::JavaScript.new(@config, @opts)
-    stanza.generate
+    if stanza.print_usage?
+      stanza.print_usage
+    else
+      stanza.generate
+    end
   rescue Stanza::StanzaConfigNotFound, Stanza::StanzaExecutionFailure => e
-    STDERR.puts e
+    warn e
   end
 
   def generate_senbero
@@ -84,6 +109,12 @@ class RDFConfig
 
   def generate_shex
     shex = Shex.new(@config)
-    shex.generate
+    puts shex.generate
+    shex.print_warnings
+  end
+
+  def convert
+    convert = Convert.new(@config, @opts)
+    convert.generate
   end
 end

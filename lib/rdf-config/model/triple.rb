@@ -153,6 +153,11 @@ class RDFConfig
               object_name = obj_data.keys.first
               add_object_name(object_name) if object_name.is_a?(String)
             end
+
+            if !predicate.rdf_type? && !obj_data.is_a?(Hash)
+              add_warning(%|The object variable name for #{@target_subject.name}/#{predicate_uri} needs to be set.|)
+            end
+
             predicate.add_object(object_instance(obj_data))
           end
         end
@@ -231,8 +236,8 @@ class RDFConfig
 
       def validate_rdf_type_predicate(predicate)
         predicate.objects.each do |object|
-          # object.name is URI of rdf:type
-          uri = object.name
+          # object.value is URI of rdf:type
+          uri = object.value
           validate_result, prefix = validate_uri(uri)
           case validate_result
           when 'NOT_URI'
@@ -254,12 +259,18 @@ class RDFConfig
             add_error("Prefix (#{prefix}) used in predicate (#{uri}) but not defined in prefix.yaml file.")
           end
 
-          return if object.is_a?(Subject) || object.is_a?(BlankNode)
+          next if predicate.rdf_type? || object.value.to_s.empty?
 
-          object_name = object.name
-          if object_name.is_a?(String)
-            validate_object_name(object_name)
-          end
+          object_name = if object.is_a?(Subject)
+                          begin
+                            object.as_object[:object].name
+                          rescue StandardError
+                            ''
+                          end
+                        else
+                          object.name
+                        end
+          validate_object_name(object_name) if object_name.is_a?(String) && !object_name.empty?
         end
       end
 
@@ -319,6 +330,7 @@ class RDFConfig
 
     class Subject
       attr_reader :name, :value, :predicates, :as_object
+      attr_accessor :bnode_name
 
       def initialize(subject_hash, prefix_hash = {})
         @prefix_hash = prefix_hash
@@ -337,19 +349,29 @@ class RDFConfig
 
       def types
         rdf_type_predicates = @predicates.select(&:rdf_type?)
-        rdf_type_predicates.map { |predicate| predicate.objects.map(&:name) }.flatten
+        rdf_type_predicates.map { |predicate| predicate.objects.map(&:value) }.flatten
       end
 
       def type(separator = ', ')
         types.join(separator)
       end
 
+      def has_rdf_type?
+        !types.empty?
+      end
+
       def blank_node?
         @name.is_a?(Array)
       end
 
-      def objects
-        @predicates.map(&:objects).flatten
+      def objects(opts = {})
+        if opts[:reject_rdf_type]
+          predicates = @predicates.reject(&:rdf_type?)
+        else
+          predicates = @predicates
+        end
+
+        predicates.map(&:objects).flatten
       end
 
       def object_names
@@ -482,8 +504,8 @@ class RDFConfig
           @name = object.keys.first
           @value = object[@name]
         else
-          @name = object
-          @value = nil
+          @name = ''
+          @value = object
         end
       end
 
@@ -577,6 +599,10 @@ class RDFConfig
         case @value
         when Integer
           'Int'
+        when TrueClass
+          'Boolean'
+        when FalseClass
+          'Boolean'
         when String
           data_type_by_string_value(@value)
         else
@@ -632,6 +658,10 @@ class RDFConfig
 
       def rdf_type_uri
         @name
+      end
+
+      def as_subject
+        @value
       end
     end
 
