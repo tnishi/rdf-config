@@ -321,6 +321,20 @@ fn determine_value_type(s: &str, prefixes: &PrefixMap) -> ObjectValueType {
         return ObjectValueType::Uri;
     }
 
+    // Date / time example, e.g. `1973-10-22`, `1973-10-22T09:15:00` or
+    // `09:15:00`. Checked before the CURIE test because a time — and a date
+    // carrying a timezone offset (`1973-10-22+09:00`) — contains a colon and
+    // would otherwise be inspected as a CURIE.
+    if is_xsd_date_time_lexical(s) {
+        return ObjectValueType::LiteralDateTime;
+    }
+    if is_xsd_date_lexical(s) {
+        return ObjectValueType::LiteralDate;
+    }
+    if is_xsd_time_lexical(s) {
+        return ObjectValueType::LiteralTime;
+    }
+
     // Known CURIE
     if is_known_curie(s, prefixes) {
         return ObjectValueType::Uri;

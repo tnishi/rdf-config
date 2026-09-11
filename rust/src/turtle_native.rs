@@ -307,8 +307,30 @@ fn format_object(object: &RdfTerm, prefixes: &PrefixMap) -> String {
         RdfTerm::LiteralFloat(s) => s.clone(),
         RdfTerm::LiteralBoolean(b) => if *b { "true".to_string() } else { "false".to_string() },
         RdfTerm::LiteralLangString(s, lang) => format!("\"{}\"@{}", escape_string(s), lang),
-        RdfTerm::LiteralDatatype(s, dt) => format!("\"{}\"^^{}", escape_string(s), dt),
+        RdfTerm::LiteralDatatype(s, dt) => {
+            format!("\"{}\"^^{}", escape_string(s), format_datatype(dt, prefixes))
+        }
     }
+}
+
+/// Format the datatype of a `"value"^^datatype` literal.
+///
+/// A datatype reaches this point in one of three shapes: a CURIE written
+/// that way in model.yaml (`xsd:integer`), a bracketed IRI
+/// (`<http://…>`), or a bare full IRI — which is how the inferred
+/// `xsd:date` datatype arrives, since the tool cannot assume prefix.yaml
+/// declares an `xsd` prefix. All three must serialize as valid Turtle, so
+/// the brackets are stripped and the result goes through the same
+/// CURIE-compression path as any other IRI: a CURIE when a declared prefix
+/// matches, `<full IRI>` otherwise. Emitting the raw string instead would
+/// produce an unbracketed IRI after `^^`, which is a syntax error.
+fn format_datatype(dt: &str, prefixes: &PrefixMap) -> String {
+    let dt = dt.trim();
+    let dt = dt
+        .strip_prefix('<')
+        .and_then(|s| s.strip_suffix('>'))
+        .unwrap_or(dt);
+    format_uri_or_curie(dt, prefixes)
 }
 
 /// Format a URI, compressing to CURIE if possible

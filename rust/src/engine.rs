@@ -998,6 +998,37 @@ fn make_rdf_term(
                 _ => RdfTerm::LiteralString(value.to_string()),
             }
         }
+        Some(ObjectValueType::LiteralDate) => {
+            // The model example said "date", but the actual column value may
+            // not be one. Only type it xsd:date when the lexical form really
+            // is a date; otherwise degrade to a plain string rather than
+            // emitting an ill-typed literal — the same policy the numeric and
+            // boolean arms above apply. The two arms below do the same for
+            // xsd:dateTime and xsd:time.
+            if is_xsd_date_lexical(value) {
+                RdfTerm::LiteralDatatype(value.to_string(), XSD_DATE.to_string())
+            } else {
+                RdfTerm::LiteralString(value.to_string())
+            }
+        }
+        Some(ObjectValueType::LiteralDateTime) => {
+            // A space-separated value (`1973-10-22 09:15:00`) is recognized
+            // but rewritten to the canonical `T` form, which is the only one
+            // xsd:dateTime's lexical space admits.
+            match normalize_xsd_date_time(value) {
+                Some(canonical) => {
+                    RdfTerm::LiteralDatatype(canonical, XSD_DATE_TIME.to_string())
+                }
+                None => RdfTerm::LiteralString(value.to_string()),
+            }
+        }
+        Some(ObjectValueType::LiteralTime) => {
+            if is_xsd_time_lexical(value) {
+                RdfTerm::LiteralDatatype(value.to_string(), XSD_TIME.to_string())
+            } else {
+                RdfTerm::LiteralString(value.to_string())
+            }
+        }
         Some(ObjectValueType::LiteralLangString { lang }) => {
             RdfTerm::LiteralLangString(value.to_string(), lang.clone())
         }

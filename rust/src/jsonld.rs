@@ -160,6 +160,21 @@ impl ObjectBinding {
                 pred: pred_uri.to_string(),
                 datatype: datatype.clone(),
             },
+            // A date/time-typed object gets the same context binding an
+            // explicit `"…"^^xsd:date` example would, so values stay bare
+            // strings in the node body and carry their type from `@context`.
+            ObjectValueType::LiteralDate => Self::Typed {
+                pred: pred_uri.to_string(),
+                datatype: XSD_DATE.to_string(),
+            },
+            ObjectValueType::LiteralDateTime => Self::Typed {
+                pred: pred_uri.to_string(),
+                datatype: XSD_DATE_TIME.to_string(),
+            },
+            ObjectValueType::LiteralTime => Self::Typed {
+                pred: pred_uri.to_string(),
+                datatype: XSD_TIME.to_string(),
+            },
             _ => Self::Plain(pred_uri.to_string()),
         }
     }
