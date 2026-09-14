@@ -1,0 +1,19 @@
+- DiseaseGeneAnnotation disease_annotation:0 gene_annotation:0:
+  - a: oa:Annotation
+  - pubtator:annotation_count:
+    - annotation_count: 1
+  - dcterms:subject:
+    - annotation_type: ["Disease", "Gene"]
+  - oa:hasBody:
+    - annotated_entity: [mesh:D011041, ncbigene:69192]
+  - oa:hasTarget:
+    - pubmed_article: pubmed:1
+
+- MutationAnnotation []:
+  - a: oa:Annotation
+  - dcterms:source:
+    - mutation_source: ["ClinVar", "PubTator3"]
+  - oa:hasBody:
+    - mutation_dbsnp: dbsnp:rs115964828
+  - oa:hasTarget:
+    - mutation_pubmed_article: pubmed:28492532
