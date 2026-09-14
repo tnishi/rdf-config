@@ -1,0 +1,11 @@
+rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+xsd: <http://www.w3.org/2001/XMLSchema#>
+dcterms: <http://purl.org/dc/terms/>
+oa: <http://www.w3.org/ns/oa#>
+pubtator: <http://purl.jp/bio/10/pubtator-central/ontology#>
+disease_annotation: <http://purl.jp/bio/10/pubtator-central/Disease/>
+gene_annotation: <http://purl.jp/bio/10/pubtator-central/Gene/>
+mesh: <http://identifiers.org/mesh/>
+ncbigene: <http://identifiers.org/ncbigene/>
+pubmed: <http://rdf.ncbi.nlm.nih.gov/pubmed/>
+dbsnp: <http://identifiers.org/dbsnp/>
