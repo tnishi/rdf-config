@@ -73,7 +73,7 @@ jobs:
           --release
           --target ${{ matrix.target }}
           --manifest-path rust/Cargo.toml
-          --features sqlite
+          --features duckdb
 
       # Windows / macOS
       - name: Build with cargo
@@ -83,7 +83,7 @@ jobs:
           --release
           --target ${{ matrix.target }}
           --manifest-path rust/Cargo.toml
-          --features sqlite
+          --features duckdb
 
       # Linux / macOS
       - name: Package Unix binary
