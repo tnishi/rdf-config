@@ -5,17 +5,20 @@ on:
     tags:
       - "v*"
 
+  workflow_dispatch:
+
 permissions:
   contents: write
 
 env:
-  # Rust CLI の実行ファイル名
-  BINARY_NAME: rdf-config
-
-  # 配布パッケージの名前
-  PACKAGE_NAME: rdf-config
+  APP_NAME: rdf-config
+  RUST_BIN: rdf-config
+  DOCKER_IMAGE: tnishi/rdf-config
 
 jobs:
+  # ============================================================
+  # Rust CLI build + Ruby program packaging
+  # ============================================================
   build:
     name: Build ${{ matrix.name }}
 
@@ -26,59 +29,81 @@ jobs:
 
       matrix:
         include:
-          # Linux x86_64 - musl + cross
+          # ------------------------------------------------------
+          # Linux x86_64
+          # Linuxのみ cross を使用
+          # ------------------------------------------------------
           - name: linux-x86_64
-            os: ubuntu-24.04
+            os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            build_tool: cross
+            use_cross: true
+            extension: ""
+            archive: tar.gz
 
-          # Linux ARM64 - musl + cross
+          # ------------------------------------------------------
+          # Linux ARM64
+          # Linuxのみ cross を使用
+          # ------------------------------------------------------
           - name: linux-aarch64
-            os: ubuntu-24.04
+            os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            build_tool: cross
+            use_cross: true
+            extension: ""
+            archive: tar.gz
 
-          # Windows x86_64
-          - name: windows-x86_64
-            os: windows-2025
-            target: x86_64-pc-windows-msvc
-            build_tool: cargo
-
-          # macOS Intel
+          # ------------------------------------------------------
+          # macOS x86_64
+          # ------------------------------------------------------
           - name: macos-x86_64
             os: macos-15-intel
             target: x86_64-apple-darwin
-            build_tool: cargo
+            use_cross: false
+            extension: ""
+            archive: tar.gz
 
-          # macOS Apple Silicon
-          - name: macos-aarch64
-            os: macos-15
+          # ------------------------------------------------------
+          # macOS arm64
+          # ------------------------------------------------------
+          - name: macos-arm64
+            os: macos-latest
             target: aarch64-apple-darwin
-            build_tool: cargo
+            use_cross: false
+            extension: ""
+            archive: tar.gz
+
+          # ------------------------------------------------------
+          # Windows x86_64
+          # ------------------------------------------------------
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            use_cross: false
+            extension: ".exe"
+            archive: zip
 
     steps:
-      #
-      # ソースコード取得
-      #
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
-      #
-      # Rust インストール
-      #
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+      # ==========================================================
+      # Rust setup
+      # ==========================================================
 
-      # Linux のときだけ cross をインストール
+      - name: Install Rust target
+        if: ${{ !matrix.use_cross }}
+        run: rustup target add ${{ matrix.target }}
+
+      # Linuxだけcrossを使用
       - name: Install cross
-        if: matrix.build_tool == 'cross'
+        if: ${{ matrix.use_cross }}
         run: cargo install cross --locked
 
-      # Linux
-      - name: Build with cross
-        if: matrix.build_tool == 'cross'
+      # ==========================================================
+      # Build Rust CLI
+      # ==========================================================
+
+      - name: Build Rust CLI with cross
+        if: ${{ matrix.use_cross }}
         run: >
           cross build
           --release
@@ -86,9 +111,8 @@ jobs:
           --manifest-path rust/Cargo.toml
           --features all
 
-      # Windows / macOS
-      - name: Build with cargo
-        if: matrix.build_tool == 'cargo'
+      - name: Build Rust CLI with cargo
+        if: ${{ !matrix.use_cross }}
         run: >
           cargo build
           --release
@@ -96,176 +120,176 @@ jobs:
           --manifest-path rust/Cargo.toml
           --features all
 
+      # ==========================================================
+      # Create package - Linux / macOS
       #
-      # Linux / macOS 向けパッケージ作成
+      # 配布パッケージ:
       #
-      - name: Package Unix
+      # rdf-config/
+      #   *.rb
+      #   lib/
+      #   ...
+      #   rust/
+      #     target/
+      #       release/
+      #         rdf-config
+      #
+      # Ruby側から
+      # rust/target/release/rdf-config
+      # を呼び出せる状態にする
+      # ==========================================================
+
+      - name: Create package directory
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          set -eux
+          PACKAGE_DIR="${APP_NAME}-${GITHUB_REF_NAME}-${{ matrix.name }}"
 
-          VERSION="${GITHUB_REF_NAME}"
-          DIST_NAME="${PACKAGE_NAME}-${VERSION}-${{ matrix.name }}"
+          mkdir -p "dist/${PACKAGE_DIR}"
 
-          mkdir -p "${DIST_NAME}"
+          rsync -a ./ "dist/${PACKAGE_DIR}/" \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'dist' \
+            --exclude 'rust/target'
 
-          #
-          # Git管理対象のファイルを配布ディレクトリへコピー
-          #
-          git archive HEAD | tar -x -C "${DIST_NAME}"
+          mkdir -p \
+            "dist/${PACKAGE_DIR}/rust/target/release"
 
-          #
-          # 配布物にはGitHub Actions設定は不要
-          #
-          rm -rf "${DIST_NAME}/.github"
-
-          #
-          # Rustソースとビルド途中のファイルを除去
-          #
-          rm -rf "${DIST_NAME}/rust"
-
-          #
-          # Rust CLI の配置先を作成
-          #
-          mkdir -p "${DIST_NAME}/rust/target/release"
-
-          #
-          # ビルド済みRustバイナリを配置
-          #
           cp \
-            "rust/target/${{ matrix.target }}/release/${BINARY_NAME}" \
-            "${DIST_NAME}/rust/target/release/${BINARY_NAME}"
+            "rust/target/${{ matrix.target }}/release/${RUST_BIN}${{ matrix.extension }}" \
+            "dist/${PACKAGE_DIR}/rust/target/release/${RUST_BIN}${{ matrix.extension }}"
 
-          #
-          # 念のため実行権限を設定
-          #
           chmod +x \
-            "${DIST_NAME}/rust/target/release/${BINARY_NAME}"
+            "dist/${PACKAGE_DIR}/rust/target/release/${RUST_BIN}${{ matrix.extension }}"
 
-          #
-          # tar.gz 作成
-          #
-          tar czf "${DIST_NAME}.tar.gz" "${DIST_NAME}"
+      # ==========================================================
+      # Create package - Windows
+      # ==========================================================
 
-      #
-      # Windows 向けパッケージ作成
-      #
-      - name: Package Windows
+      - name: Create package directory
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          $PackageDir = "${env:APP_NAME}-${env:GITHUB_REF_NAME}-${{ matrix.name }}"
+          $Dest = "dist\$PackageDir"
 
-          $version = "${{ github.ref_name }}"
-          $distName = "${env:PACKAGE_NAME}-${version}-${{ matrix.name }}"
+          New-Item -ItemType Directory -Force -Path $Dest
 
-          #
-          # Git管理対象ファイルを一旦 zip にする
-          #
-          git archive `
-            --format=zip `
-            --output=source.zip `
-            HEAD
+          Get-ChildItem -Force |
+            Where-Object {
+              $_.Name -ne ".git" -and
+              $_.Name -ne ".github" -and
+              $_.Name -ne "dist"
+            } |
+            ForEach-Object {
+              Copy-Item $_.FullName `
+                -Destination $Dest `
+                -Recurse `
+                -Force
+            }
 
-          #
-          # 配布ディレクトリへ展開
-          #
-          Expand-Archive `
-            -Path source.zip `
-            -DestinationPath $distName
+          # 元のrust/targetを削除
+          $TargetDir = "$Dest\rust\target"
 
-          Remove-Item source.zip
-
-          #
-          # GitHub Actions設定は配布物から除外
-          #
-          if (Test-Path "$distName/.github") {
-            Remove-Item `
-              -Recurse `
-              -Force `
-              "$distName/.github"
+          if (Test-Path $TargetDir) {
+            Remove-Item $TargetDir -Recurse -Force
           }
 
-          #
-          # Rustソースを配布物から除外
-          #
-          if (Test-Path "$distName/rust") {
-            Remove-Item `
-              -Recurse `
-              -Force `
-              "$distName/rust"
-          }
-
-          #
-          # Rust CLI 配置ディレクトリ作成
-          #
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path "$distName/rust/target/release"
+            -Path "$Dest\rust\target\release"
 
-          #
-          # Rust CLI を配置
-          #
           Copy-Item `
-            "rust/target/${{ matrix.target }}/release/${env:BINARY_NAME}.exe" `
-            "$distName/rust/target/release/${env:BINARY_NAME}.exe"
+            "rust\target\${{ matrix.target }}\release\${env:RUST_BIN}${{ matrix.extension }}" `
+            "$Dest\rust\target\release\${env:RUST_BIN}${{ matrix.extension }}"
 
-          #
-          # zip 作成
-          #
+      # ==========================================================
+      # Archive Linux / macOS
+      # ==========================================================
+
+      - name: Create tar.gz
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        working-directory: dist
+        run: |
+          PACKAGE_DIR="${APP_NAME}-${GITHUB_REF_NAME}-${{ matrix.name }}"
+
+          tar czf \
+            "${PACKAGE_DIR}.tar.gz" \
+            "${PACKAGE_DIR}"
+
+      # ==========================================================
+      # Archive Windows
+      # ==========================================================
+
+      - name: Create zip
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        working-directory: dist
+        run: |
+          $PackageDir = "${env:APP_NAME}-${env:GITHUB_REF_NAME}-${{ matrix.name }}"
+
           Compress-Archive `
-            -Path $distName `
-            -DestinationPath "${distName}.zip"
+            -Path $PackageDir `
+            -DestinationPath "$PackageDir.zip"
 
-      #
-      # 作成した配布ファイルを次のreleaseジョブへ渡す
-      #
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      # ==========================================================
+      # Upload artifact
+      # ==========================================================
+
+      - name: Upload release artifact
+        if: matrix.archive == 'tar.gz'
+        uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.name }}
-          path: |
-            *.tar.gz
-            *.zip
+          name: ${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.name }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
 
+      - name: Upload release artifact
+        if: matrix.archive == 'zip'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.APP_NAME }}-${{ github.ref_name }}-${{ matrix.name }}
+          path: dist/*.zip
+          if-no-files-found: error
 
-  #
-  # 全OSのビルド成功後に GitHub Release を作成
-  #
+  # ============================================================
+  # GitHub Release
+  # ============================================================
   release:
     name: Create GitHub Release
 
-    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    needs:
+      - build
 
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
       #
       # buildジョブで作成した全パッケージを取得
       #
       - name: Download artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
-          path: artifacts
+          path: release
           merge-multiple: true
 
-      - name: Show artifacts
+      - name: Show release files
         run: |
-          find artifacts -maxdepth 1 -type f -print
+          find release -type f -maxdepth 2 -print
 
       #
       # GitHub Release 作成
       #
       - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            artifacts/* \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            release/*.tar.gz
+            release/*.zip
+
+          generate_release_notes: true
