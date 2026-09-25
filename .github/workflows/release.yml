@@ -67,7 +67,6 @@ jobs:
           --release
           --target ${{ matrix.target }}
           --manifest-path rust/Cargo.toml
-          --features all
 
       # Linux / macOS
       - name: Package Unix binary
