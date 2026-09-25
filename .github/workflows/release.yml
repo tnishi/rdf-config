@@ -41,10 +41,10 @@ jobs:
             archive: tar.gz
 
           # ------------------------------------------------------
-          # Linux ARM64
+          # Linux arm64
           # Linuxのみ cross を使用
           # ------------------------------------------------------
-          - name: linux-aarch64
+          - name: linux-arm64
             os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             use_cross: true
@@ -151,7 +151,7 @@ jobs:
             --exclude '.git' \
             --exclude '.github' \
             --exclude 'dist' \
-            --exclude 'rust/target'
+            --exclude 'rust'
 
           mkdir -p \
             "dist/${PACKAGE_DIR}/rust/target/release"
@@ -180,7 +180,8 @@ jobs:
             Where-Object {
               $_.Name -ne ".git" -and
               $_.Name -ne ".github" -and
-              $_.Name -ne "dist"
+              $_.Name -ne "dist" -and
+              $_.Name -ne "rust"
             } |
             ForEach-Object {
               Copy-Item $_.FullName `
@@ -188,13 +189,6 @@ jobs:
                 -Recurse `
                 -Force
             }
-
-          # 元のrust/targetを削除
-          $TargetDir = "$Dest\rust\target"
-
-          if (Test-Path $TargetDir) {
-            Remove-Item $TargetDir -Recurse -Force
-          }
 
           New-Item `
             -ItemType Directory `
