@@ -67,6 +67,7 @@ jobs:
           --release
           --target ${{ matrix.target }}
           --manifest-path rust/Cargo.toml
+          --features sqlite
 
       # Linux / macOS
       - name: Package Unix binary
