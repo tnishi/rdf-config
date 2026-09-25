@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - "v*"
-
   workflow_dispatch:
 
 permissions:
@@ -22,35 +21,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
+          # Linux x86_64 - musl + cross
           - name: linux-x86_64
             os: ubuntu-24.04
             target: x86_64-unknown-linux-musl
-            archive: tar.gz
+            build_tool: cross
 
-          # Linux ARM64
+          # Linux ARM64 - musl + cross
           - name: linux-aarch64
-            os: ubuntu-24.04-arm
+            os: ubuntu-24.04
             target: aarch64-unknown-linux-musl
-            archive: tar.gz
+            build_tool: cross
 
           # Windows x86_64
           - name: windows-x86_64
             os: windows-2025
             target: x86_64-pc-windows-msvc
-            archive: zip
+            build_tool: cargo
 
           # macOS Intel
           - name: macos-x86_64
             os: macos-15-intel
             target: x86_64-apple-darwin
-            archive: tar.gz
+            build_tool: cargo
 
           # macOS Apple Silicon
           - name: macos-aarch64
             os: macos-15
             target: aarch64-apple-darwin
-            archive: tar.gz
+            build_tool: cargo
 
     steps:
       - name: Checkout
@@ -61,7 +60,24 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build Rust CLI
+      # Linux のときだけ cross をインストール
+      - name: Install cross
+        if: matrix.build_tool == 'cross'
+        run: cargo install cross --locked
+
+      # Linux
+      - name: Build with cross
+        if: matrix.build_tool == 'cross'
+        run: >
+          cross build
+          --release
+          --target ${{ matrix.target }}
+          --manifest-path rust/Cargo.toml
+          --features all
+
+      # Windows / macOS
+      - name: Build with cargo
+        if: matrix.build_tool == 'cargo'
         run: >
           cargo build
           --release
@@ -129,7 +145,9 @@ jobs:
 
   release:
     name: Create GitHub Release
+
     if: startsWith(github.ref, 'refs/tags/v')
+
     needs: build
     runs-on: ubuntu-latest
 
