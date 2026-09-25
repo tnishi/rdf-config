@@ -4,21 +4,26 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
+  # Rust CLI の実行ファイル名
   BINARY_NAME: rdf-config
+
+  # 配布パッケージの名前
+  PACKAGE_NAME: rdf-config
 
 jobs:
   build:
     name: Build ${{ matrix.name }}
+
     runs-on: ${{ matrix.os }}
 
     strategy:
       fail-fast: false
+
       matrix:
         include:
           # Linux x86_64 - musl + cross
@@ -52,9 +57,15 @@ jobs:
             build_tool: cargo
 
     steps:
+      #
+      # ソースコード取得
+      #
       - name: Checkout
         uses: actions/checkout@v6
 
+      #
+      # Rust インストール
+      #
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -85,56 +96,132 @@ jobs:
           --manifest-path rust/Cargo.toml
           --features all
 
-      # Linux / macOS
-      - name: Package Unix binary
+      #
+      # Linux / macOS 向けパッケージ作成
+      #
+      - name: Package Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          set -eux
+
           VERSION="${GITHUB_REF_NAME}"
-          ARCHIVE_NAME="${BINARY_NAME}-${VERSION}-${{ matrix.name }}"
+          DIST_NAME="${PACKAGE_NAME}-${VERSION}-${{ matrix.name }}"
 
-          mkdir -p "${ARCHIVE_NAME}"
+          mkdir -p "${DIST_NAME}"
 
+          #
+          # Git管理対象のファイルを配布ディレクトリへコピー
+          #
+          git archive HEAD | tar -x -C "${DIST_NAME}"
+
+          #
+          # 配布物にはGitHub Actions設定は不要
+          #
+          rm -rf "${DIST_NAME}/.github"
+
+          #
+          # Rustソースとビルド途中のファイルを除去
+          #
+          rm -rf "${DIST_NAME}/rust"
+
+          #
+          # Rust CLI の配置先を作成
+          #
+          mkdir -p "${DIST_NAME}/rust/target/release"
+
+          #
+          # ビルド済みRustバイナリを配置
+          #
           cp \
             "rust/target/${{ matrix.target }}/release/${BINARY_NAME}" \
-            "${ARCHIVE_NAME}/"
+            "${DIST_NAME}/rust/target/release/${BINARY_NAME}"
 
-          if [ -f README.md ]; then
-            cp README.md "${ARCHIVE_NAME}/"
-          fi
+          #
+          # 念のため実行権限を設定
+          #
+          chmod +x \
+            "${DIST_NAME}/rust/target/release/${BINARY_NAME}"
 
-          if [ -f LICENSE ]; then
-            cp LICENSE "${ARCHIVE_NAME}/"
-          fi
+          #
+          # tar.gz 作成
+          #
+          tar czf "${DIST_NAME}.tar.gz" "${DIST_NAME}"
 
-          tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
-
-      # Windows
-      - name: Package Windows binary
+      #
+      # Windows 向けパッケージ作成
+      #
+      - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           $version = "${{ github.ref_name }}"
-          $archiveName = "${env:BINARY_NAME}-${version}-${{ matrix.name }}"
+          $distName = "${env:PACKAGE_NAME}-${version}-${{ matrix.name }}"
 
-          New-Item -ItemType Directory -Path $archiveName
+          #
+          # Git管理対象ファイルを一旦 zip にする
+          #
+          git archive `
+            --format=zip `
+            --output=source.zip `
+            HEAD
 
+          #
+          # 配布ディレクトリへ展開
+          #
+          Expand-Archive `
+            -Path source.zip `
+            -DestinationPath $distName
+
+          Remove-Item source.zip
+
+          #
+          # GitHub Actions設定は配布物から除外
+          #
+          if (Test-Path "$distName/.github") {
+            Remove-Item `
+              -Recurse `
+              -Force `
+              "$distName/.github"
+          }
+
+          #
+          # Rustソースを配布物から除外
+          #
+          if (Test-Path "$distName/rust") {
+            Remove-Item `
+              -Recurse `
+              -Force `
+              "$distName/rust"
+          }
+
+          #
+          # Rust CLI 配置ディレクトリ作成
+          #
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "$distName/rust/target/release"
+
+          #
+          # Rust CLI を配置
+          #
           Copy-Item `
             "rust/target/${{ matrix.target }}/release/${env:BINARY_NAME}.exe" `
-            "$archiveName/"
+            "$distName/rust/target/release/${env:BINARY_NAME}.exe"
 
-          if (Test-Path "README.md") {
-            Copy-Item "README.md" "$archiveName/"
-          }
-
-          if (Test-Path "LICENSE") {
-            Copy-Item "LICENSE" "$archiveName/"
-          }
-
+          #
+          # zip 作成
+          #
           Compress-Archive `
-            -Path $archiveName `
-            -DestinationPath "${archiveName}.zip"
+            -Path $distName `
+            -DestinationPath "${distName}.zip"
 
+      #
+      # 作成した配布ファイルを次のreleaseジョブへ渡す
+      #
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -143,18 +230,24 @@ jobs:
             *.tar.gz
             *.zip
 
+
+  #
+  # 全OSのビルド成功後に GitHub Release を作成
+  #
   release:
     name: Create GitHub Release
 
-    if: startsWith(github.ref, 'refs/tags/v')
-
     needs: build
+
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
+      #
+      # buildジョブで作成した全パッケージを取得
+      #
       - name: Download artifacts
         uses: actions/download-artifact@v5
         with:
@@ -162,8 +255,12 @@ jobs:
           merge-multiple: true
 
       - name: Show artifacts
-        run: ls -lah artifacts
+        run: |
+          find artifacts -maxdepth 1 -type f -print
 
+      #
+      # GitHub Release 作成
+      #
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
